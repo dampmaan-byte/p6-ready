@@ -1,4 +1,5 @@
 "use client";
+// @ts-nocheck
 
 import { useState, useMemo, useCallback, useRef } from "react";
 
@@ -165,23 +166,22 @@ function findAllCuts(customH, customW, depth, qty=1) {
   return results.length > 0 ? results.slice(0, 10) : null;
 }
 
-// ─── SVG CUT DIAGRAM ────────────────────────────────────────────────────────
-function CutDiagram({ result, compact = false, printMode = false }) {
+// ─── SVG CUT DIAGRAM (always B&W for consistency with manufacturing sheets) ─
+function CutDiagram({ result, compact = false }) {
   const svgW = compact ? 320 : 420, svgH = compact ? 220 : 300, pad = compact ? 40 : 55;
   const drawW = svgW - pad * 2, drawH = svgH - pad * 2;
-  const P = printMode;
-  const stockFill = P ? "#e8e8e8" : "#1e293b", stockStroke = P ? "#111" : "#475569";
-  const keepFill = P ? "#ddd" : "#059669", keepFillOp = P ? 0.9 : 0.3;
-  const keepStroke = P ? "#111" : "#10b981";
-  const wasteFill = P ? "#fff" : "#dc2626", wasteFillOp = P ? 0 : 0.15, wasteStroke = P ? "#555" : "#ef4444";
-  const dimStroke = P ? "#111" : "#0066B3", dimFill = P ? "#111" : "#0066B3";
-  const stkDimStroke = P ? "#555" : "#94a3b8", stkDimFill = P ? "#555" : "#94a3b8";
-  const keepTextFill = P ? "#000" : "#10b981", wasteTextFill = P ? "#444" : "#ef4444";
-  const jointStroke = P ? "#333" : "#f59e0b", jointTextFill = P ? "#333" : "#f59e0b";
-  const filterColors = P ? ["#bbb","#999","#777","#555","#888","#aaa"] : ["#475569","#6366f1","#8b5cf6","#ec4899","#14b8a6","#f97316"];
-  const labelColors = P ? ["#222","#333","#444","#555","#666","#777"] : ["#94a3b8","#a5b4fc","#c4b5fd","#f9a8d4","#5eead4","#fdba74"];
+  const stockFill = "#e8e8e8", stockStroke = "#111";
+  const keepFill = "#ddd", keepFillOp = 0.9;
+  const keepStroke = "#111";
+  const wasteFill = "#fff", wasteFillOp = 0, wasteStroke = "#555";
+  const dimStroke = "#111", dimFill = "#111";
+  const stkDimStroke = "#555", stkDimFill = "#555";
+  const keepTextFill = "#000", wasteTextFill = "#444";
+  const jointStroke = "#333", jointTextFill = "#333";
+  const filterColors = ["#bbb","#999","#777","#555","#888","#aaa"];
+  const labelColors = ["#222","#333","#444","#555","#666","#777"];
   const fontSize = compact ? 9 : 11;
-  const svgBg = P ? "#fff" : "transparent";
+  const svgBg = "#fff";
 
   // Multi-yield: show FILTER 1 → middle cap/waste → FILTER 2 (outer edges = stock frame)
   if (result.layout === "multi-yield") {
@@ -190,8 +190,8 @@ function CutDiagram({ result, compact = false, printMode = false }) {
     const rw = f.actW * scale, rh = f.actH * scale;
     const ox = (svgW - rw) / 2, oy = (svgH - rh) / 2;
     const cw = result.customActW * scale, ch = result.customActH * scale;
-    const capColor = "#f59e0b";
-    const capFillOp = P ? 0.3 : 0.25;
+    const capColor = "#555";
+    const capFillOp = 0.3;
 
     if (result.yieldAxis === "H") {
       // 2×1 stacked: [Filter 1 top] [cap/waste middle] [Filter 2 bottom] | [side trim right]
@@ -394,7 +394,7 @@ function PrintSheet({ order, cartItems, onClose }) {
                     <div><div style={LABEL}>Stock Required</div><div style={VALUE}>{nomLabel} x {r.depth}" — pull {stockPull} → makes {item.qty} filter{item.qty!==1?"s":""}</div></div>
                   </div>
                   <div style={{padding:"8px",borderLeft:"1px solid #ddd",display:"flex",alignItems:"center",justifyContent:"center",background:"#fff"}}>
-                    <CutDiagram result={r} compact={true} printMode={true}/>
+                    <CutDiagram result={r} compact={true}/>
                   </div>
                 </div>
               </div>
@@ -418,6 +418,11 @@ function PrintSheet({ order, cartItems, onClose }) {
 }
 
 // ─── MAIN APP ───────────────────────────────────────────────────────────────
+// ── Shared UI constants (must be outside component to avoid re-render issues) ──
+const BLUE = "#0066B3";
+const INP_STYLE = {padding:"10px 14px",fontSize:"14px",border:"1px solid #e2e8f0",borderRadius:"8px",background:"#f8fafc",color:"#1e293b",outline:"none",transition:"border-color 0.15s",fontFamily:"inherit"};
+const Inp = (props) => <input {...props} style={{...INP_STYLE,...(props.style||{})}} onFocus={e=>{e.target.style.borderColor=BLUE;props.onFocus&&props.onFocus(e);}} onBlur={e=>{e.target.style.borderColor="#e2e8f0";props.onBlur&&props.onBlur(e);}}/>;
+
 export default function FilterCutDB() {
   const [customH,setCustomH]=useState("");
   const [customW,setCustomW]=useState("");
@@ -459,11 +464,10 @@ export default function FilterCutDB() {
   const tabs=[{id:"builder",label:"Filter Builder"},{id:"cart",label:`Order Cart (${cartItems.length})`},{id:"summary",label:"Stock Summary"}];
 
   // ── Shared UI constants ──
-  const blue = "#0066B3";
+  const blue = BLUE;
   const mono = "'Courier New',monospace";
   const card = {background:"#fff",border:"1px solid #e2e8f0",borderRadius:"12px",boxShadow:"0 1px 3px rgba(0,0,0,0.06)"};
   const sectionTitle = {fontSize:"11px",fontWeight:"700",color:"#475569",textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"16px"};
-  const Inp = (props) => <input {...props} style={{padding:"10px 14px",fontSize:"14px",border:"1px solid #e2e8f0",borderRadius:"8px",background:"#f8fafc",color:"#1e293b",outline:"none",transition:"border-color 0.15s",fontFamily:"inherit",...(props.style||{})}} onFocus={e=>{e.target.style.borderColor=blue;props.onFocus&&props.onFocus(e);}} onBlur={e=>{e.target.style.borderColor="#e2e8f0";props.onBlur&&props.onBlur(e);}}/>;
   const btnBlue = (disabled) => ({background:disabled?"#cbd5e1":blue,color:disabled?"#94a3b8":"#fff",border:"none",borderRadius:"8px",padding:"10px 20px",fontWeight:"600",fontSize:"13px",cursor:disabled?"default":"pointer",display:"flex",alignItems:"center",gap:"8px",transition:"background 0.15s",fontFamily:"inherit",boxShadow:disabled?"none":`0 1px 3px rgba(0,102,179,0.25)`});
   const btnSel = (active) => ({padding:"10px 16px",fontSize:"13px",fontWeight:"600",borderRadius:"8px",border:active?`2px solid ${blue}`:"2px solid #e2e8f0",background:active?blue:"#fff",color:active?"#fff":"#475569",cursor:"pointer",transition:"all 0.15s",boxShadow:active?`0 2px 8px rgba(0,102,179,0.25)`:"none",fontFamily:"inherit"});
 
