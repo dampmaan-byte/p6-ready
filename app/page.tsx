@@ -25,7 +25,7 @@ const PRODUCTS = [
   { id: "3030",        label: "Camfil 30/30 MV8",        short: "30/30"       },
   { id: "aeropleat13", label: "Camfil Aeropleat 13 MV8", short: "Aeropleat 13"},
   { id: "mv8",         label: "Mann Hummel MV8",         short: "MV8"         },
-  { id: "dual9",       label: "Camfil Dual MV9/9A",       short: "Dual MV9/9A" },
+  { id: "dual9",       label: "Camfil Dual MV9/9A",      short: "Dual MV9/9A" },
 ];
 
 const DEPTH_ACTUAL = { 1: 0.88, 2: 1.75, 4: 3.75 };
@@ -35,16 +35,8 @@ const toActualDepth = (d) => DEPTH_ACTUAL[d];
 const PREFERRED = new Set(["16x20","20x20","20x25","16x25","24x24","20x24","12x24","20x30","25x25"]);
 const isPreferred = (nomH, nomW) => PREFERRED.has(`${nomH}x${nomW}`) || PREFERRED.has(`${nomW}x${nomH}`);
 
-const cutMethodLabel = (r) => {
-  if (r.multiYield) {
-    const dir = r.splitDirection === "height" ? "2×1" : "1×2";
-    if (r.stockFilters.length === 1) return `Multi-Yield ${dir}`;
-    return `Multi-Yield ${dir} — ${r.stockFilters.length}-Filter Butt`;
-  }
-  if (r.type === "single") return "Single Cut";
-  if (r.layout === "grid") return `${r.gridRows}×${r.gridCols} Grid`;
-  return `${r.stockFilters.length}-Filter Butt`;
-};
+// ─── Inp: MODULE-LEVEL INPUT (fixes React focus bug) ─────────────────────────
+const Inp = (props) => <input {...props} />;
 
 // ─── CUTTING ENGINE ───────────────────────────────────────────────────────────
 function getStockOrientations(stocks) {
@@ -61,7 +53,7 @@ function getStockOrientations(stocks) {
   return orientations;
 }
 
-function findBestCut(customH, customW, depth, qty) {
+function findBestCut(customH, customW, depth, qty = 1) {
   const stocks = STOCK[depth];
   if (!stocks) return null;
   const needH = customH, needW = customW;
@@ -70,16 +62,58 @@ function findBestCut(customH, customW, depth, qty) {
   const MIN_CUT = 1;
   const isSafeCut = (trim) => trim === 0 || trim >= MIN_CUT;
 
+  // ── SINGLE CUT ──────────────────────────────────────────────────────────
   for (const f of allOrientations) {
     if (f.actH >= needH && f.actW >= needW) {
       const wasteH = +(f.actH - needH).toFixed(4), wasteW = +(f.actW - needW).toFixed(4);
       if (!isSafeCut(wasteH) || !isSafeCut(wasteW)) continue;
       const wasteArea = +((f.actH * f.actW) - (needH * needW)).toFixed(4);
       const cuts = (wasteH > 0 ? 1 : 0) + (wasteW > 0 ? 1 : 0);
-      results.push({ type:"single", stockFilters:[{ nomH:f.nomH, nomW:f.nomW, actH:f.actH, actW:f.actW, rotated:f.rotated, origNomH:f.origNomH, origNomW:f.origNomW }], trimH:wasteH, trimW:wasteW, wasteArea, cuts, customActH:needH, customActW:needW, depth });
+      results.push({ type:"single", stockFilters:[{ nomH:f.nomH, nomW:f.nomW, actH:f.actH, actW:f.actW, rotated:f.rotated, origNomH:f.origNomH, origNomW:f.origNomW }], trimH:wasteH, trimW:wasteW, wasteArea, cuts, customActH:needH, customActW:needW, depth, yieldsPerStock:1 });
     }
   }
 
+  // ── MULTI-YIELD (only when qty > 1) — max 2 per stock ──────────────────
+  if (qty > 1) {
+    for (const f of allOrientations) {
+      // 2×1: two custom filters stacked vertically, waste in middle
+      const twoH = needH * 2;
+      if (f.actH >= twoH && f.actW >= needW) {
+        const middleWaste = +(f.actH - twoH).toFixed(4);
+        const sideTrim = +(f.actW - needW).toFixed(4);
+        if (isSafeCut(middleWaste) && isSafeCut(sideTrim)) {
+          const wasteArea = +((f.actH * f.actW) - (needH * needW * 2)).toFixed(4);
+          const cuts = 1 + (middleWaste > 0 ? 1 : 0) + (sideTrim > 0 ? 1 : 0);
+          results.push({
+            type:"multi-yield-2x1", isMultiYield:true, yieldsPerStock:2, multiLayout:"2x1",
+            stockFilters:[{ nomH:f.nomH, nomW:f.nomW, actH:f.actH, actW:f.actW, rotated:f.rotated, origNomH:f.origNomH, origNomW:f.origNomW }],
+            middleWaste, sideTrim,
+            trimH:sideTrim, trimW:middleWaste,
+            wasteArea, cuts, customActH:needH, customActW:needW, depth
+          });
+        }
+      }
+      // 1×2: two custom filters side by side, waste in middle
+      const twoW = needW * 2;
+      if (f.actH >= needH && f.actW >= twoW) {
+        const middleWaste = +(f.actW - twoW).toFixed(4);
+        const topTrim = +(f.actH - needH).toFixed(4);
+        if (isSafeCut(middleWaste) && isSafeCut(topTrim)) {
+          const wasteArea = +((f.actH * f.actW) - (needH * needW * 2)).toFixed(4);
+          const cuts = 1 + (middleWaste > 0 ? 1 : 0) + (topTrim > 0 ? 1 : 0);
+          results.push({
+            type:"multi-yield-1x2", isMultiYield:true, yieldsPerStock:2, multiLayout:"1x2",
+            stockFilters:[{ nomH:f.nomH, nomW:f.nomW, actH:f.actH, actW:f.actW, rotated:f.rotated, origNomH:f.origNomH, origNomW:f.origNomW }],
+            middleWaste, topTrim,
+            trimH:topTrim, trimW:middleWaste,
+            wasteArea, cuts, customActH:needH, customActW:needW, depth
+          });
+        }
+      }
+    }
+  }
+
+  // ── LINEAR (butt joint) ─────────────────────────────────────────────────
   const byActH = {};
   for (const f of allOrientations) { const hKey = f.actH.toFixed(2); if (!byActH[hKey]) byActH[hKey]=[]; byActH[hKey].push(f); }
 
@@ -92,7 +126,7 @@ function findBestCut(customH, customW, depth, qty) {
     const joints = filterCombo.length - 1;
     const cuts = joints + (wasteH > 0 ? 1 : 0) + (wasteW > 0 ? 1 : 0);
     const count = filterCombo.length;
-    results.push({ type: count===2?"linear-2":count===3?"linear-3":"linear-4", layout:"linear", gridRows:1, gridCols:count, stockFilters:filterCombo.map(f=>({ nomH:f.nomH, nomW:f.nomW, actH:f.actH, actW:f.actW, rotated:f.rotated, origNomH:f.origNomH, origNomW:f.origNomW })), trimH:wasteH, trimW:wasteW, combinedW, combinedH:actH, wasteArea, cuts, customActH:needH, customActW:needW, depth });
+    results.push({ type: count===2?"linear-2":count===3?"linear-3":"linear-4", layout:"linear", gridRows:1, gridCols:count, stockFilters:filterCombo.map(f=>({ nomH:f.nomH, nomW:f.nomW, actH:f.actH, actW:f.actW, rotated:f.rotated, origNomH:f.origNomH, origNomW:f.origNomW })), trimH:wasteH, trimW:wasteW, combinedW, combinedH:actH, wasteArea, cuts, customActH:needH, customActW:needW, depth, yieldsPerStock:1 });
   };
 
   for (const [hKey, filters] of Object.entries(byActH)) {
@@ -103,11 +137,10 @@ function findBestCut(customH, customW, depth, qty) {
     for (let i=0;i<filters.length;i++) for (let j=i;j<filters.length;j++) for (let k=j;k<filters.length;k++) for (let l=k;l<filters.length;l++) addLinearResult(actH,[filters[i],filters[j],filters[k],filters[l]]);
   }
 
+  // ── GRID ────────────────────────────────────────────────────────────────
   const uniqueHeights = [...new Set(allOrientations.map(f => +f.actH.toFixed(2)))].sort((a,b)=>a-b);
   const uniqueWidths  = [...new Set(allOrientations.map(f => +f.actW.toFixed(2)))].sort((a,b)=>a-b);
-  const filterMap = new Map();
-  for (const f of allOrientations) filterMap.set(f.actH.toFixed(2)+"|"+f.actW.toFixed(2), f);
-  const findFilter = (h, w) => filterMap.get(h.toFixed(2)+"|"+w.toFixed(2));
+  const findFilter = (h, w) => allOrientations.find(f => +f.actH.toFixed(2) === +h.toFixed(2) && +f.actW.toFixed(2) === +w.toFixed(2));
 
   const addGridResult = (rowHeights, colWidths) => {
     const nRows=rowHeights.length, nCols=colWidths.length;
@@ -119,67 +152,31 @@ function findBestCut(customH, customW, depth, qty) {
     for (let r=0;r<nRows;r++) for (let c=0;c<nCols;c++) { const f=findFilter(rowHeights[r],colWidths[c]); if (!f) return; gridFilters.push({ nomH:f.nomH, nomW:f.nomW, actH:f.actH, actW:f.actW, rotated:f.rotated, origNomH:f.origNomH, origNomW:f.origNomW, gridRow:r, gridCol:c }); }
     const wasteArea=+((combinedH*combinedW)-(needH*needW)).toFixed(4);
     const joints=(nRows-1)+(nCols-1), cuts=joints+(wasteH>0?1:0)+(wasteW>0?1:0);
-    results.push({ type:`grid-${nRows}x${nCols}`, layout:"grid", gridRows:nRows, gridCols:nCols, rowHeights, colWidths, stockFilters:gridFilters, trimH:wasteH, trimW:wasteW, combinedW, combinedH, wasteArea, cuts, customActH:needH, customActW:needW, depth });
+    results.push({ type:`grid-${nRows}x${nCols}`, layout:"grid", gridRows:nRows, gridCols:nCols, rowHeights, colWidths, stockFilters:gridFilters, trimH:wasteH, trimW:wasteW, combinedW, combinedH, wasteArea, cuts, customActH:needH, customActW:needW, depth, yieldsPerStock:1 });
   };
 
-  const combos = (arr, n) => {
-    if(n===1)return arr.map(x=>[x]);if(n===2)return arr.flatMap((x,i)=>arr.slice(i).map(y=>[x,y]));
-    if(n===3)return arr.flatMap((x,i)=>arr.slice(i).flatMap((y,j)=>arr.slice(i+j).map(z=>[x,y,z])));
-    if(n===4)return arr.flatMap((x,i)=>arr.slice(i).flatMap((y,j)=>arr.slice(i+j).flatMap((z,k)=>arr.slice(i+j+k).map(w=>[x,y,z,w]))));
-    return [];
-  };
-  const smallGridConfigs=[[2,2],[2,3],[3,2],[3,3],[2,4],[4,2]];
-  for(const[nR,nC]of smallGridConfigs){const hC=combos(uniqueHeights,nR),wC=combos(uniqueWidths,nC);
-    for(const rh of hC){const tH=rh.reduce((a,b)=>a+b,0);if(tH<needH)continue;for(const cw of wC){const tW=cw.reduce((a,b)=>a+b,0);if(tW<needW)continue;addGridResult(rh,cw);}}}
-  const largeGridConfigs=[[3,4],[4,3],[4,4]];
-  for(const[nR,nC]of largeGridConfigs){for(const h of uniqueHeights){const tH=h*nR;if(tH<needH)continue;
-    for(const w of uniqueWidths){const tW=w*nC;if(tW<needW)continue;addGridResult(Array(nR).fill(h),Array(nC).fill(w));}}}
-
-  // ─── MULTI-YIELD: 2 custom filters from 1 stock arrangement (qty > 1) ───
-  if((qty||1)>1){
-    const addMY=(fc,cH,cW,ej)=>{
-      const mf=f=>({nomH:f.nomH,nomW:f.nomW,actH:f.actH,actW:f.actW,rotated:f.rotated,origNomH:f.origNomH,origNomW:f.origNomW});
-      const j=ej!=null?ej:fc.length-1;
-      if(cH>=needH*2){const mid=+(cH-needH*2).toFixed(4),tw=+(cW-needW).toFixed(4);
-        if(cW>=needW&&isSafeCut(mid)&&isSafeCut(tw)){const wa=+((cH*cW)-(needH*needW*2)).toFixed(4);
-          results.push({type:"multi-2x1",multiYield:true,yieldsPerStock:2,splitDirection:"height",layout:fc.length>1?"linear":undefined,stockFilters:fc.map(mf),trimH:mid,trimW:tw,combinedW:cW,combinedH:cH,wasteArea:wa,cuts:1+j+(mid>0?1:0)+(tw>0?1:0),customActH:needH,customActW:needW,depth});}}
-      if(cH>=needH&&cW>=needW*2){const th=+(cH-needH).toFixed(4),mid=+(cW-needW*2).toFixed(4);
-        if(isSafeCut(th)&&isSafeCut(mid)){const wa=+((cH*cW)-(needH*needW*2)).toFixed(4);
-          results.push({type:"multi-1x2",multiYield:true,yieldsPerStock:2,splitDirection:"width",layout:fc.length>1?"linear":undefined,stockFilters:fc.map(mf),trimH:th,trimW:mid,combinedW:cW,combinedH:cH,wasteArea:wa,cuts:1+j+(th>0?1:0)+(mid>0?1:0),customActH:needH,customActW:needW,depth});}}
-    };
-    for(const f of allOrientations)addMY([f],f.actH,f.actW);
-    for(const[hKey,filters]of Object.entries(byActH)){const actH=parseFloat(hKey);
-      const tc=combo=>addMY(combo,actH,combo.reduce((s,f)=>s+f.actW,0));
-      for(let i=0;i<filters.length;i++)for(let j=i;j<filters.length;j++)tc([filters[i],filters[j]]);
-      for(let i=0;i<filters.length;i++)for(let j=i;j<filters.length;j++)for(let k=j;k<filters.length;k++)tc([filters[i],filters[j],filters[k]]);
-      for(let i=0;i<filters.length;i++)for(let j=i;j<filters.length;j++)for(let k=j;k<filters.length;k++)for(let l=k;l<filters.length;l++)tc([filters[i],filters[j],filters[k],filters[l]]);}
-    const addGMY=(rh,cw)=>{const nR=rh.length,nC=cw.length,cH=rh.reduce((a,b)=>a+b,0),cW=cw.reduce((a,b)=>a+b,0);
-      const gf=[];for(let r=0;r<nR;r++)for(let cc=0;cc<nC;cc++){const f=findFilter(rh[r],cw[cc]);if(!f)return;gf.push(f);}
-      addMY(gf,cH,cW,(nR-1)+(nC-1));};
-    for(const[nR,nC]of smallGridConfigs){const hC=combos(uniqueHeights,nR),wC=combos(uniqueWidths,nC);
-      for(const rh of hC){const tH=rh.reduce((a,b)=>a+b,0);if(tH<needH*2&&tH<needH)continue;
-        for(const cw of wC){const tW=cw.reduce((a,b)=>a+b,0);if(tW<needW*2&&tW<needW)continue;addGMY(rh,cw);}}}
-    for(const[nR,nC]of largeGridConfigs){for(const h of uniqueHeights){const tH=h*nR;if(tH<needH*2&&tH<needH)continue;
-      for(const w of uniqueWidths){const tW=w*nC;if(tW<needW*2&&tW<needW)continue;addGMY(Array(nR).fill(h),Array(nC).fill(w));}}}
+  const gridConfigs=[[2,2],[2,3],[3,2]];
+  for (const [nRows,nCols] of gridConfigs) {
+    const hCombos=nRows===2?uniqueHeights.flatMap((h1,i)=>uniqueHeights.slice(i).map(h2=>[h1,h2])):uniqueHeights.flatMap((h1,i)=>uniqueHeights.slice(i).flatMap((h2,j)=>uniqueHeights.slice(i+j).map(h3=>[h1,h2,h3])));
+    const wCombos=nCols===2?uniqueWidths.flatMap((w1,i)=>uniqueWidths.slice(i).map(w2=>[w1,w2])):uniqueWidths.flatMap((w1,i)=>uniqueWidths.slice(i).flatMap((w2,j)=>uniqueWidths.slice(i+j).map(w3=>[w1,w2,w3])));
+    for (const rh of hCombos) { const totalH=rh.reduce((a,b)=>a+b,0); if(totalH<needH) continue; for (const cw of wCombos) { const totalW=cw.reduce((a,b)=>a+b,0); if(totalW<needW) continue; addGridResult(rh,cw); } }
   }
 
-  // Sort: multi-yield first, then fewest filters, least waste, preferred stock, fewer cuts
+  // ── SORT ────────────────────────────────────────────────────────────────
+  // Priority: multi-yield first → preferred stock → least waste → fewer stock filters → fewer cuts
   const prefScore = (r) => {
     const allPref = r.stockFilters.every(f => isPreferred(f.nomH, f.nomW));
     const somePref = r.stockFilters.some(f => isPreferred(f.nomH, f.nomW));
-    if (r.multiYield && allPref) return -2;
-    if (r.multiYield) return -1;
-    if (allPref) return 0;
-    if (somePref) return 1;
-    return 2;
+    return allPref ? 0 : somePref ? 1 : 2;
   };
-  results.sort((a, b) => 
+  results.sort((a, b) =>
+    (a.isMultiYield ? 0 : 1) - (b.isMultiYield ? 0 : 1) ||
     prefScore(a) - prefScore(b) ||
-    a.stockFilters.length - b.stockFilters.length ||
     a.wasteArea - b.wasteArea ||
+    a.stockFilters.length - b.stockFilters.length ||
     a.cuts - b.cuts
   );
-  return results.length>0?results.slice(0,12):null;
+  return results.length > 0 ? results.slice(0, 8) : null;
 }
 
 // ─── SVG CUT DIAGRAM ─────────────────────────────────────────────────────────
@@ -194,10 +191,10 @@ function CutDiagram({ result, compact = false, printMode = false }) {
   const stockFill    = P ? "#e8e8e8"  : "#e2e8f0";
   const stockStroke  = P ? "#111"     : "#94a3b8";
   const keepFill     = P ? "#ddd"     : "#0066B3";
-  const keepFillOp   = P ? 0.9        : 0.2;
+  const keepFillOp   = P ? 0.9        : 0.18;
   const keepStroke   = P ? "#111"     : "#0066B3";
   const wasteFill    = P ? "#fff"     : "#dc2626";
-  const wasteFillOp  = P ? 0          : 0.1;
+  const wasteFillOp  = P ? 0          : 0.08;
   const wasteStroke  = P ? "#555"     : "#ef4444";
   const dimStroke    = P ? "#111"     : "#0066B3";
   const dimFill      = P ? "#111"     : "#0066B3";
@@ -215,6 +212,100 @@ function CutDiagram({ result, compact = false, printMode = false }) {
     : ["#64748b","#0066B3","#2563eb","#4f46e5","#0284c7","#0d9488"];
   const fontSize = compact ? 9 : 11;
 
+  // ── MULTI-YIELD 2×1 (stacked vertically, waste in middle) ──────────
+  if (result.type === "multi-yield-2x1") {
+    const f = result.stockFilters[0];
+    const scale = Math.min(drawW / f.actW, drawH / f.actH);
+    const rw = f.actW * scale, rh = f.actH * scale;
+    const ox = (svgW - rw) / 2, oy = (svgH - rh) / 2;
+    const ch = result.customActH * scale;
+    const cw = result.customActW * scale;
+    const mw = result.middleWaste * scale;
+    return (
+      <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full" style={{ maxHeight: svgH, background: svgBg }}>
+        {/* Stock outline */}
+        <rect x={ox} y={oy} width={rw} height={rh} fill={stockFill} stroke={stockStroke} strokeWidth={1.5} rx={2}/>
+        {/* Top KEEP */}
+        <rect x={ox} y={oy} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
+        <text x={ox+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?10:12} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 1</text>
+        {/* Middle waste zone */}
+        {result.middleWaste > 0 && (
+          <>
+            <rect x={ox} y={oy+ch} width={rw} height={mw} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>
+            <text x={ox+rw/2} y={oy+ch+mw/2} textAnchor="middle" fill={wasteTextFill} fontSize={8} fontFamily="monospace" dominantBaseline="middle">{result.middleWaste}" waste</text>
+          </>
+        )}
+        {/* Bottom KEEP */}
+        <rect x={ox} y={oy+ch+mw} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
+        <text x={ox+cw/2} y={oy+ch+mw+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?10:12} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 2</text>
+        {/* Side trim */}
+        {result.sideTrim > 0 && (
+          <>
+            <rect x={ox+cw} y={oy} width={rw-cw} height={rh} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>
+            <text x={ox+cw+(rw-cw)/2} y={oy+rh/2} textAnchor="middle" fill={wasteTextFill} fontSize={8} fontFamily="monospace" dominantBaseline="middle" transform={`rotate(-90,${ox+cw+(rw-cw)/2},${oy+rh/2})`}>{result.sideTrim}" trim</text>
+          </>
+        )}
+        {/* Dimensions */}
+        <line x1={ox} y1={oy-10} x2={ox+cw} y2={oy-10} stroke={dimStroke} strokeWidth={1}/>
+        <text x={ox+cw/2} y={oy-15} textAnchor="middle" fill={dimFill} fontSize={fontSize} fontFamily="monospace">{result.customActW}"</text>
+        <line x1={ox-10} y1={oy} x2={ox-10} y2={oy+ch} stroke={dimStroke} strokeWidth={1}/>
+        <text x={ox-14} y={oy+ch/2} textAnchor="end" fill={dimFill} fontSize={fontSize} fontFamily="monospace" dominantBaseline="middle">{result.customActH}"</text>
+        <line x1={ox+rw+10} y1={oy} x2={ox+rw+10} y2={oy+rh} stroke={stkDimStroke} strokeWidth={1}/>
+        <text x={ox+rw+14} y={oy+rh/2} textAnchor="start" fill={stkDimFill} fontSize={fontSize-1} fontFamily="monospace" dominantBaseline="middle">{f.actH}" stk</text>
+        {/* Split line */}
+        <line x1={ox} y1={oy+ch} x2={ox+cw} y2={oy+ch} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/>
+        {result.middleWaste > 0 && <line x1={ox} y1={oy+ch+mw} x2={ox+cw} y2={oy+ch+mw} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/>}
+      </svg>
+    );
+  }
+
+  // ── MULTI-YIELD 1×2 (side by side, waste in middle) ────────────────
+  if (result.type === "multi-yield-1x2") {
+    const f = result.stockFilters[0];
+    const scale = Math.min(drawW / f.actW, drawH / f.actH);
+    const rw = f.actW * scale, rh = f.actH * scale;
+    const ox = (svgW - rw) / 2, oy = (svgH - rh) / 2;
+    const ch = result.customActH * scale;
+    const cw = result.customActW * scale;
+    const mw = result.middleWaste * scale;
+    return (
+      <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full" style={{ maxHeight: svgH, background: svgBg }}>
+        <rect x={ox} y={oy} width={rw} height={rh} fill={stockFill} stroke={stockStroke} strokeWidth={1.5} rx={2}/>
+        {/* Left KEEP */}
+        <rect x={ox} y={oy} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
+        <text x={ox+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?10:12} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 1</text>
+        {/* Middle waste zone */}
+        {result.middleWaste > 0 && (
+          <>
+            <rect x={ox+cw} y={oy} width={mw} height={rh} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>
+            <text x={ox+cw+mw/2} y={oy+rh/2} textAnchor="middle" fill={wasteTextFill} fontSize={8} fontFamily="monospace" dominantBaseline="middle" transform={`rotate(-90,${ox+cw+mw/2},${oy+rh/2})`}>{result.middleWaste}" waste</text>
+          </>
+        )}
+        {/* Right KEEP */}
+        <rect x={ox+cw+mw} y={oy} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
+        <text x={ox+cw+mw+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?10:12} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 2</text>
+        {/* Top trim */}
+        {result.topTrim > 0 && (
+          <>
+            <rect x={ox} y={oy+ch} width={rw} height={rh-ch} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>
+            <text x={ox+rw/2} y={oy+ch+(rh-ch)/2} textAnchor="middle" fill={wasteTextFill} fontSize={8} fontFamily="monospace" dominantBaseline="middle">{result.topTrim}" trim</text>
+          </>
+        )}
+        {/* Dimensions */}
+        <line x1={ox} y1={oy-10} x2={ox+cw} y2={oy-10} stroke={dimStroke} strokeWidth={1}/>
+        <text x={ox+cw/2} y={oy-15} textAnchor="middle" fill={dimFill} fontSize={fontSize} fontFamily="monospace">{result.customActW}"</text>
+        <line x1={ox-10} y1={oy} x2={ox-10} y2={oy+ch} stroke={dimStroke} strokeWidth={1}/>
+        <text x={ox-14} y={oy+ch/2} textAnchor="end" fill={dimFill} fontSize={fontSize} fontFamily="monospace" dominantBaseline="middle">{result.customActH}"</text>
+        <line x1={ox} y1={oy+rh+10} x2={ox+rw} y2={oy+rh+10} stroke={stkDimStroke} strokeWidth={1}/>
+        <text x={ox+rw/2} y={oy+rh+22} textAnchor="middle" fill={stkDimFill} fontSize={fontSize-1} fontFamily="monospace">{f.actW}" stk</text>
+        {/* Split lines */}
+        <line x1={ox+cw} y1={oy} x2={ox+cw} y2={oy+ch} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/>
+        {result.middleWaste > 0 && <line x1={ox+cw+mw} y1={oy} x2={ox+cw+mw} y2={oy+ch} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/>}
+      </svg>
+    );
+  }
+
+  // ── SINGLE CUT ──────────────────────────────────────────────────────
   if (result.type === "single") {
     const f = result.stockFilters[0];
     const scale = Math.min(drawW / f.actW, drawH / f.actH);
@@ -242,6 +333,7 @@ function CutDiagram({ result, compact = false, printMode = false }) {
     );
   }
 
+  // ── GRID ────────────────────────────────────────────────────────────
   if (result.layout === "grid") {
     const { rowHeights, colWidths, gridRows, gridCols } = result;
     const totalH=rowHeights.reduce((a,b)=>a+b,0), totalW=colWidths.reduce((a,b)=>a+b,0);
@@ -270,60 +362,7 @@ function CutDiagram({ result, compact = false, printMode = false }) {
     );
   }
 
-  // Multi-yield diagram
-  if (result.multiYield) {
-    const filters = result.stockFilters;
-    const totalStockW = filters.length > 1 ? filters.reduce((s,f)=>s+f.actW,0) : filters[0].actW;
-    const totalStockH = filters[0].actH;
-    const scale = Math.min(drawW / totalStockW, drawH / totalStockH);
-    const rw = totalStockW * scale, rh = totalStockH * scale;
-    const ox = (svgW - rw) / 2, oy = (svgH - rh) / 2;
-    const cw = result.customActW * scale, ch = result.customActH * scale;
-    const scaledWidths = filters.map(f => f.actW * scale);
-    const xPositions = []; let lx = ox; for (const sw of scaledWidths) { xPositions.push(lx); lx += sw; }
-    if (result.splitDirection === "height") {
-      const midW = result.trimH * scale;
-      return (
-        <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full" style={{ maxHeight: svgH, background: svgBg }}>
-          {filters.map((f,i)=><rect key={i} x={xPositions[i]} y={oy} width={scaledWidths[i]} height={rh} fill={stockFill} stroke={filterColors[i%filterColors.length]} strokeWidth={1.5} rx={2} strokeDasharray={i>0?"6 3":"none"}/>)}
-          <rect x={ox} y={oy} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
-          <text x={ox+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 1</text>
-          {midW>0&&<rect x={ox} y={oy+ch} width={rw} height={midW} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
-          {midW>0&&<text x={ox+rw/2} y={oy+ch+midW/2} textAnchor="middle" fill={wasteTextFill} fontSize={7} fontFamily="monospace" dominantBaseline="middle">{result.trimH}" waste</text>}
-          <rect x={ox} y={oy+ch+midW} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
-          <text x={ox+cw/2} y={oy+ch+midW+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 2</text>
-          {result.trimW>0&&<rect x={ox+cw} y={oy} width={rw-cw} height={rh} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
-          {xPositions.slice(1).map((xp,i)=><line key={i} x1={xp} y1={oy} x2={xp} y2={oy+rh} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/>)}
-          <line x1={ox} y1={oy-10} x2={ox+cw} y2={oy-10} stroke={dimStroke} strokeWidth={1}/>
-          <text x={ox+cw/2} y={oy-15} textAnchor="middle" fill={dimFill} fontSize={fontSize} fontFamily="monospace">{result.customActW}"</text>
-          <line x1={ox-10} y1={oy} x2={ox-10} y2={oy+ch} stroke={dimStroke} strokeWidth={1}/>
-          <text x={ox-14} y={oy+ch/2} textAnchor="end" fill={dimFill} fontSize={fontSize} fontFamily="monospace" dominantBaseline="middle">{result.customActH}"</text>
-          {filters.length>1&&<><line x1={ox} y1={oy-24} x2={ox+rw} y2={oy-24} stroke={stkDimStroke} strokeWidth={1}/><text x={ox+rw/2} y={oy-29} textAnchor="middle" fill={stkDimFill} fontSize={fontSize-1} fontFamily="monospace">{totalStockW.toFixed(1)}" combined</text></>}
-          {filters.map((f,i)=><text key={i} x={xPositions[i]+scaledWidths[i]/2} y={oy+rh+14} textAnchor="middle" fill={labelColors[i%labelColors.length]} fontSize={Math.min(8,80/filters.length)} fontFamily="monospace">{String.fromCharCode(65+i)}: {f.nomH}x{f.nomW}</text>)}
-        </svg>);
-    } else {
-      const midW = result.trimW * scale;
-      return (
-        <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full" style={{ maxHeight: svgH, background: svgBg }}>
-          {filters.map((f,i)=><rect key={i} x={xPositions[i]} y={oy} width={scaledWidths[i]} height={rh} fill={stockFill} stroke={filterColors[i%filterColors.length]} strokeWidth={1.5} rx={2} strokeDasharray={i>0?"6 3":"none"}/>)}
-          <rect x={ox} y={oy} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
-          <text x={ox+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 1</text>
-          {midW>0&&<rect x={ox+cw} y={oy} width={midW} height={rh} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
-          <rect x={ox+cw+midW} y={oy} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
-          <text x={ox+cw+midW+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 2</text>
-          {result.trimH>0&&<rect x={ox} y={oy+ch} width={rw} height={rh-ch} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
-          {xPositions.slice(1).map((xp,i)=><line key={i} x1={xp} y1={oy} x2={xp} y2={oy+rh} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/>)}
-          <line x1={ox} y1={oy-10} x2={ox+cw} y2={oy-10} stroke={dimStroke} strokeWidth={1}/>
-          <text x={ox+cw/2} y={oy-15} textAnchor="middle" fill={dimFill} fontSize={fontSize} fontFamily="monospace">{result.customActW}"</text>
-          <line x1={ox-10} y1={oy} x2={ox-10} y2={oy+ch} stroke={dimStroke} strokeWidth={1}/>
-          <text x={ox-14} y={oy+ch/2} textAnchor="end" fill={dimFill} fontSize={fontSize} fontFamily="monospace" dominantBaseline="middle">{result.customActH}"</text>
-          {filters.length>1&&<><line x1={ox} y1={oy-24} x2={ox+rw} y2={oy-24} stroke={stkDimStroke} strokeWidth={1}/><text x={ox+rw/2} y={oy-29} textAnchor="middle" fill={stkDimFill} fontSize={fontSize-1} fontFamily="monospace">{totalStockW.toFixed(1)}" combined</text></>}
-          {filters.map((f,i)=><text key={i} x={xPositions[i]+scaledWidths[i]/2} y={oy+rh+14} textAnchor="middle" fill={labelColors[i%labelColors.length]} fontSize={Math.min(8,80/filters.length)} fontFamily="monospace">{String.fromCharCode(65+i)}: {f.nomH}x{f.nomW}</text>)}
-        </svg>);
-    }
-  }
-
-  // Linear
+  // ── LINEAR ──────────────────────────────────────────────────────────
   const filters = result.stockFilters;
   const totalW=filters.reduce((sum,f)=>sum+f.actW,0), maxH=filters[0].actH;
   const scale=Math.min(drawW/totalW, drawH/maxH);
@@ -351,21 +390,29 @@ function CutDiagram({ result, compact = false, printMode = false }) {
   );
 }
 
-// ─── STOCK SUMMARY HELPER ─────────────────────────────────────────────────────
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+function getMethodLabel(r) {
+  if (r.isMultiYield) return `Multi-Yield ${r.multiLayout}`;
+  if (r.type === "single") return "Single Cut";
+  if (r.layout === "grid") return `${r.gridRows}x${r.gridCols} Grid`;
+  return `${r.stockFilters.length}-Filter Butt`;
+}
+
 function calcStockSummary(cartItems) {
   const map = {};
   for (const item of cartItems) {
     if (!item.selectedResult) continue;
-    const rawQty = item.qty || 1;
-    const yieldsPerStock = item.selectedResult.yieldsPerStock || 1;
-    const stockSets = Math.ceil(rawQty / yieldsPerStock);
+    const qty = item.qty || 1;
+    const r = item.selectedResult;
+    const yieldsPerStock = r.yieldsPerStock || 1;
+    const stockNeeded = r.isMultiYield ? Math.ceil(qty / yieldsPerStock) : qty;
     const prod = PRODUCTS.find(p => p.id === item.productId) || PRODUCTS[0];
-    for (const sf of item.selectedResult.stockFilters) {
+    for (const sf of r.stockFilters) {
       const nomLabel = sf.rotated ? `${sf.origNomH}x${sf.origNomW}` : `${sf.nomH}x${sf.nomW}`;
-      const sizeKey = `${nomLabel} x ${item.selectedResult.depth}"`;
+      const sizeKey = `${nomLabel} x ${r.depth}"`;
       const key = `${item.productId}||${sizeKey}`;
       if (!map[key]) map[key] = { productId: item.productId, productShort: prod.short, productLabel: prod.label, sizeKey, qty: 0 };
-      map[key].qty += stockSets;
+      map[key].qty += stockNeeded;
     }
   }
   return Object.values(map).sort((a, b) => a.productLabel.localeCompare(b.productLabel) || a.sizeKey.localeCompare(b.sizeKey));
@@ -387,35 +434,10 @@ function PrintSheet({ order, cartItems, onClose }) {
       body{font-family:'JetBrains Mono',monospace;background:#fff;color:#111;font-size:11px;}
       .page{width:8.5in;min-height:11in;padding:0.5in;page-break-after:always;}
       .page:last-child{page-break-after:auto;}
-      .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #111;padding-bottom:10px;margin-bottom:16px;}
-      .hdr-left h1{font-size:18px;font-weight:700;letter-spacing:-0.5px;}
-      .hdr-left .sub{font-size:11px;color:#000;font-weight:600;margin-top:2px;}
-      .hdr-right{text-align:right;font-size:11px;line-height:1.6;}
-      .badge{display:inline-block;background:#111;color:#fff;font-size:9px;font-weight:700;padding:2px 6px;border-radius:3px;letter-spacing:1px;}
-      .item-block{border:1px solid #999;border-radius:4px;margin-bottom:12px;overflow:hidden;page-break-inside:avoid;}
-      .item-hdr{background:#e8e8e8;border-bottom:1px solid #999;padding:6px 10px;display:flex;justify-content:space-between;align-items:center;color:#000;}
-      .item-hdr .title{font-size:12px;font-weight:700;}
-      .item-hdr .meta{font-size:10px;color:#000;font-weight:600;}
-      .item-body{display:grid;grid-template-columns:1fr 260px;gap:0;}
-      .item-info{padding:10px 12px;border-right:1px solid #ccc;color:#000;}
-      .item-info .row{display:flex;gap:12px;margin-bottom:6px;flex-wrap:wrap;}
-      .item-info .lbl{font-size:9px;color:#000;font-weight:700;text-transform:uppercase;letter-spacing:.5px;display:block;}
-      .item-info .val{font-size:12px;font-weight:600;}
-      .item-info .stock-row{font-size:11px;margin-bottom:3px;}
-      .item-info .pref{color:#000;font-size:9px;}
-      .item-info .rot{color:#000;font-size:9px;}
-      .cut-note{background:#f0f0f0;border:1px solid #999;padding:6px 10px;font-size:10px;color:#000;font-weight:600;}
-      .item-diagram{padding:8px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid #ccc;}
-      .item-diagram svg{width:100%;max-height:180px;}
       .summary-page{width:8.5in;padding:0.5in;}
-      .sum-hdr{border-bottom:2px solid #111;padding-bottom:10px;margin-bottom:16px;}
-      .sum-hdr h2{font-size:16px;font-weight:700;}
-      .sum-table{width:100%;border-collapse:collapse;font-size:11px;}
-      .sum-table th{background:#111;color:#fff;text-align:left;padding:6px 10px;}
-      .sum-table td{padding:6px 10px;border-bottom:1px solid #ccc;color:#000;}
-      .sum-table tr:nth-child(even) td{background:#fff;}
-      .sum-total{font-weight:700;background:#fff!important;}
-      .footer{margin-top:20px;font-size:9px;color:#000;text-align:center;}
+      table{width:100%;border-collapse:collapse;}
+      th{background:#111;color:#fff;text-align:left;padding:6px 10px;}
+      td{padding:6px 10px;border-bottom:1px solid #ccc;color:#000;}
     </style></head><body>${printContent}</body></html>`);
     w.document.close();
     w.focus();
@@ -423,30 +445,33 @@ function PrintSheet({ order, cartItems, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/80 z-50 flex flex-col">
-      <div className="bg-slate-900 border-b border-slate-700 px-6 py-3 flex items-center justify-between flex-shrink-0">
-        <div>
-          <span className="text-white font-bold font-mono">Manufacturing Sheet Preview</span>
-          <span className="text-slate-400 text-sm font-mono ml-3">Order: {order.orderNumber} — {order.customerName}</span>
+    <div className="fixed inset-0 bg-black/70 z-50 flex flex-col">
+      <div className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between flex-shrink-0">
+        <div className="flex items-center gap-3">
+          <span className="text-slate-800 font-bold text-sm">Manufacturing Sheet Preview</span>
+          <span className="text-slate-500 text-sm">Order: {order.orderNumber} — {order.customerName}</span>
         </div>
         <div className="flex gap-3">
-          <button onClick={handlePrint} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2 rounded text-sm font-mono flex items-center gap-2">
-            🖨 Print / Save PDF
+          <button onClick={handlePrint} className="bg-[#0066B3] hover:bg-[#005299] text-white font-bold px-5 py-2 rounded-lg text-sm flex items-center gap-2">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
+            Print / Save PDF
           </button>
-          <button onClick={onClose} className="border border-slate-600 hover:border-slate-400 text-slate-300 hover:text-white px-4 py-2 rounded text-sm font-mono">Close</button>
+          <button onClick={onClose} className="border border-slate-300 hover:border-slate-400 text-slate-600 hover:text-slate-800 px-4 py-2 rounded-lg text-sm">Close</button>
         </div>
       </div>
-      <div className="flex-1 overflow-auto bg-slate-800 p-6">
+      <div className="flex-1 overflow-auto bg-slate-100 p-6">
         <div ref={printRef} style={{ color:"#000", fontFamily:"'JetBrains Mono',monospace" }}>
-          {/* Page 1+: One item per block */}
+          {/* Per-item cut sheets */}
           {cartItems.map((item, idx) => {
             if (!item.selectedResult) return null;
             const r = item.selectedResult;
             const prod = PRODUCTS.find(p => p.id === item.productId) || PRODUCTS[0];
+            const yieldsPerStock = r.yieldsPerStock || 1;
+            const stockNeeded = r.isMultiYield ? Math.ceil(item.qty / yieldsPerStock) : item.qty;
             return (
-              <div key={item.id} className="page" style={{ background:"#fff", color:"#000", fontFamily:"'JetBrains Mono',monospace", width:"100%", minHeight:"min-content", padding:"0.5in", marginBottom:"8px", boxShadow:"0 2px 8px rgba(0,0,0,0.15)" }}>
+              <div key={item.id} style={{ background:"#fff", color:"#000", fontFamily:"'JetBrains Mono',monospace", width:"100%", minHeight:"min-content", padding:"0.5in", marginBottom:"8px", boxShadow:"0 2px 8px rgba(0,0,0,0.1)" }}>
                 {/* Header */}
-                <div className="hdr" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", borderBottom:"2px solid #111", paddingBottom:"10px", marginBottom:"16px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", borderBottom:"2px solid #111", paddingBottom:"10px", marginBottom:"16px" }}>
                   <div>
                     <div style={{ fontSize:"18px", fontWeight:"700", letterSpacing:"-0.5px" }}>Manufacturing Cut Sheet</div>
                     <div style={{ fontSize:"11px", fontWeight:"600", marginTop:"2px" }}>General Aire Systems, Inc. — Warehouse Production</div>
@@ -458,62 +483,63 @@ function PrintSheet({ order, cartItems, onClose }) {
                     <div><strong>Item:</strong> {idx+1} of {cartItems.filter(i=>i.selectedResult).length}</div>
                   </div>
                 </div>
-                {/* Item block */}
-                <div className="item-block" style={{ border:"1px solid #ddd", borderRadius:"4px", overflow:"hidden" }}>
-                  {/* Item header — custom size lives here only */}
-                  <div className="item-hdr" style={{ background:"#f5f5f5", borderBottom:"1px solid #ddd", padding:"6px 10px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                {/* 5-field layout + diagram */}
+                <div style={{ border:"1px solid #ddd", borderRadius:"4px", overflow:"hidden" }}>
+                  <div style={{ background:"#f5f5f5", borderBottom:"1px solid #ddd", padding:"6px 10px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                     <span style={{ fontSize:"12px", fontWeight:"700" }}>
-                      Line {idx+1} — {item.customH}" × {item.customW}" × {toActualDepth(r.depth)}" — {prod.label}
+                      Line {idx+1} — {item.customH}" × {item.customW}" × {r.depth}" — {prod.label}
                     </span>
-                    <span style={{ fontSize:"10px", fontWeight:"600" }}>
-                      QTY: {item.qty} &nbsp;|&nbsp; Drawing: {prod.drawing}
+                    <span style={{ display:"inline-block", background:"#111", color:"#fff", fontSize:"9px", fontWeight:"700", padding:"2px 8px", borderRadius:"3px", letterSpacing:"1px" }}>
+                      {getMethodLabel(r)}
                     </span>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 280px" }}>
-                    {/* Info — size block removed; Qty and MERV moved to front */}
-                    <div style={{ padding:"10px 12px", borderRight:"1px solid #eee" }}>
-                      <div style={{ display:"flex", gap:"20px", marginBottom:"10px" }}>
+                    <div style={{ padding:"12px 14px", borderRight:"1px solid #eee" }}>
+                      {/* 5-field MFG layout */}
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"10px", marginBottom:"14px" }}>
                         <div>
-                          <span style={{ fontSize:"9px", fontWeight:"700", textTransform:"uppercase", letterSpacing:".5px", display:"block" }}>Qty to Cut</span>
-                          <span style={{ fontSize:"13px", fontWeight:"700" }}>{item.qty}</span>
+                          <div style={{ fontSize:"9px", fontWeight:"700", textTransform:"uppercase", letterSpacing:".5px", color:"#666" }}>Custom Filter Qty</div>
+                          <div style={{ fontSize:"16px", fontWeight:"700", marginTop:"2px" }}>{item.qty}</div>
                         </div>
                         <div>
-                          <span style={{ fontSize:"9px", fontWeight:"700", textTransform:"uppercase", letterSpacing:".5px", display:"block" }}>MERV</span>
-                          <span style={{ fontSize:"13px", fontWeight:"700" }}>{prod.merv}</span>
+                          <div style={{ fontSize:"9px", fontWeight:"700", textTransform:"uppercase", letterSpacing:".5px", color:"#666" }}>Custom Filter Size</div>
+                          <div style={{ fontSize:"14px", fontWeight:"700", marginTop:"2px" }}>{item.customH}" × {item.customW}" × {r.depth}"</div>
                         </div>
                         <div>
-                          <span style={{ fontSize:"9px", fontWeight:"700", textTransform:"uppercase", letterSpacing:".5px", display:"block" }}>Depth (Actual)</span>
-                          <span style={{ fontSize:"13px", fontWeight:"700" }}>{toActualDepth(r.depth)}"</span>
+                          <div style={{ fontSize:"9px", fontWeight:"700", textTransform:"uppercase", letterSpacing:".5px", color:"#666" }}>Product Type</div>
+                          <div style={{ fontSize:"12px", fontWeight:"600", marginTop:"2px" }}>{prod.label}</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize:"9px", fontWeight:"700", textTransform:"uppercase", letterSpacing:".5px", color:"#666" }}>Cut Method</div>
+                          <div style={{ fontSize:"12px", fontWeight:"600", marginTop:"2px" }}>{getMethodLabel(r)}</div>
                         </div>
                       </div>
-                      <div style={{ marginBottom:"8px" }}>
-                        <span style={{ fontSize:"9px", fontWeight:"700", textTransform:"uppercase", letterSpacing:".5px", display:"block", marginBottom:"4px" }}>Stock Filter(s) Required</span>
+                      <div style={{ borderTop:"1px solid #eee", paddingTop:"10px" }}>
+                        <div style={{ fontSize:"9px", fontWeight:"700", textTransform:"uppercase", letterSpacing:".5px", color:"#666", marginBottom:"4px" }}>Stock Required</div>
                         {r.stockFilters.map((sf, si) => {
                           const nomLabel = sf.rotated ? `${sf.origNomH}x${sf.origNomW}` : `${sf.nomH}x${sf.nomW}`;
                           return (
-                            <div key={si} style={{ fontSize:"12px", marginBottom:"3px" }}>
-                              {r.stockFilters.length > 1 && <span style={{ fontWeight:"700" }}>{String.fromCharCode(65+si)}: </span>}
-                              <strong>{nomLabel} x {r.depth}"</strong>
-                              <span style={{ fontSize:"10px" }}> × {item.qty} = <strong>{item.qty} pc</strong></span>
+                            <div key={si} style={{ fontSize:"13px", fontWeight:"700", marginBottom:"3px" }}>
+                              {r.stockFilters.length > 1 && <span>{String.fromCharCode(65+si)}: </span>}
+                              Pull {stockNeeded} × {nomLabel} x {r.depth}" → makes {item.qty}
                             </div>
                           );
                         })}
+                        {r.isMultiYield && (
+                          <div style={{ background:"#f0f7ff", border:"1px solid #b3d4f7", borderRadius:"3px", padding:"5px 8px", fontSize:"10px", color:"#0066B3", fontWeight:"600", marginTop:"6px" }}>
+                            Multi-Yield: 2 custom filters per stock — {r.multiLayout === "2x1" ? "stacked vertically" : "side by side"}, waste from middle
+                          </div>
+                        )}
+                        {!r.isMultiYield && r.type !== "single" && (
+                          <div style={{ background:"#f0f0f0", border:"1px solid #999", borderRadius:"3px", padding:"5px 8px", fontSize:"10px", color:"#111", marginTop:"6px" }}>
+                            {r.layout === "grid"
+                              ? `${r.gridRows}×${r.gridCols} grid — butt and tape seams, then trim to ${item.customW}" × ${item.customH}"`
+                              : `${r.stockFilters.length} filters butted along width — combined ${r.combinedW}" → trim to ${item.customW}"`}
+                          </div>
+                        )}
                       </div>
-                      <div style={{ display:"flex", gap:"16px", marginBottom:"8px" }}>
-                        <div><span style={{ fontSize:"9px", fontWeight:"700", textTransform:"uppercase", display:"block" }}>Trim Height</span><span style={{ fontSize:"11px", fontWeight:"600" }}>{r.trimH > 0 ? `${r.trimH}"` : "None"}</span></div>
-                        <div><span style={{ fontSize:"9px", fontWeight:"700", textTransform:"uppercase", display:"block" }}>Trim Width</span><span style={{ fontSize:"11px", fontWeight:"600" }}>{r.trimW > 0 ? `${r.trimW}"` : "None"}</span></div>
-                        <div><span style={{ fontSize:"9px", fontWeight:"700", textTransform:"uppercase", display:"block" }}>Cuts</span><span style={{ fontSize:"11px", fontWeight:"600" }}>{r.cuts}</span></div>
-                        <div><span style={{ fontSize:"9px", fontWeight:"700", textTransform:"uppercase", display:"block" }}>Waste</span><span style={{ fontSize:"11px", fontWeight:"600" }}>{r.wasteArea.toFixed(1)} sq in</span></div>
-                      </div>
-                      {r.type !== "single" && (
-                        <div style={{ background:"#f0f0f0", border:"1px solid #999", borderRadius:"3px", padding:"6px 8px", fontSize:"10px", color:"#111" }}>
-                          {r.layout === "grid"
-                            ? `${r.gridRows}×${r.gridCols} grid — ${r.stockFilters.length} filters — butt and tape seams, then trim to ${item.customW}" × ${item.customH}"`
-                            : `${r.stockFilters.length} filters butted along width — combined ${r.combinedW}" → trim to ${item.customW}"`}
-                        </div>
-                      )}
                     </div>
-                    {/* Diagram */}
+                    {/* B&W Diagram */}
                     <div style={{ padding:"8px", background:"#fff", border:"1px solid #ccc", display:"flex", alignItems:"center", justifyContent:"center" }}>
                       <CutDiagram result={r} compact={true} printMode={true} />
                     </div>
@@ -524,7 +550,7 @@ function PrintSheet({ order, cartItems, onClose }) {
           })}
 
           {/* Summary Page */}
-          <div className="summary-page" style={{ background:"#fff", color:"#000", fontFamily:"'JetBrains Mono',monospace", width:"100%", padding:"0.5in", marginBottom:"8px", boxShadow:"0 2px 8px rgba(0,0,0,0.15)" }}>
+          <div style={{ background:"#fff", color:"#000", fontFamily:"'JetBrains Mono',monospace", width:"100%", padding:"0.5in", marginBottom:"8px", boxShadow:"0 2px 8px rgba(0,0,0,0.1)" }}>
             <div style={{ borderBottom:"2px solid #111", paddingBottom:"10px", marginBottom:"16px", display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
               <div>
                 <div style={{ fontSize:"18px", fontWeight:"700" }}>Stock Filter Allocation Summary</div>
@@ -536,8 +562,6 @@ function PrintSheet({ order, cartItems, onClose }) {
                 <div><strong>Date:</strong> {today}</div>
               </div>
             </div>
-
-            {/* Cart summary table */}
             <div style={{ marginBottom:"20px" }}>
               <div style={{ fontSize:"11px", fontWeight:"700", textTransform:"uppercase", letterSpacing:".5px", marginBottom:"6px" }}>Custom Filter Line Items</div>
               <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"11px" }}>
@@ -559,20 +583,16 @@ function PrintSheet({ order, cartItems, onClose }) {
                       <tr key={item.id} style={{ background:"#fff" }}>
                         <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc" }}>{idx+1}</td>
                         <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc" }}>{prod.short}</td>
-                        <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc", fontWeight:"700" }}>{item.customH}" × {item.customW}" × {toActualDepth(r.depth)}"</td>
+                        <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc", fontWeight:"700" }}>{item.customH}" × {item.customW}" × {r.depth}"</td>
                         <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc" }}>{r.depth}"</td>
                         <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc", fontWeight:"700" }}>{item.qty}</td>
-                        <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc" }}>
-                          {r.type==="single"?"Single Cut":r.layout==="grid"?`${r.gridRows}×${r.gridCols} Grid`:`${r.stockFilters.length}-Filter Butt`}
-                        </td>
+                        <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc" }}>{getMethodLabel(r)}</td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
             </div>
-
-            {/* Stock allocation table */}
             <div>
               <div style={{ fontSize:"11px", fontWeight:"700", textTransform:"uppercase", letterSpacing:".5px", marginBottom:"6px" }}>Stock Filter Pull List (Total Units Required)</div>
               <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"11px" }}>
@@ -682,40 +702,39 @@ export default function FilterCutDB() {
     { id:"summary", label:"Stock Summary" },
   ];
 
+  const inputCls = "bg-white border border-slate-200 rounded-lg px-4 py-2.5 text-slate-800 text-sm focus:outline-none focus:border-[#0066B3] focus:ring-2 focus:ring-[#0066B3]/20 placeholder-slate-400 transition-all";
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800">
+    <div className="min-h-screen bg-slate-50 text-slate-800" style={{ fontFamily: "Calibri, 'Segoe UI', system-ui, -apple-system, sans-serif" }}>
       {showPrint && <PrintSheet order={{ orderNumber, customerName }} cartItems={cartItems} onClose={() => setShowPrint(false)} />}
 
-      {/* Top bar */}
+      {/* ── TOP BAR ── */}
       <div className="border-b border-slate-200 bg-white sticky top-0 z-10 shadow-sm">
-        <div className="max-w-6xl mx-auto px-8 py-5 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-8 py-4 flex items-center justify-between">
           <div className="flex items-center gap-5">
-            <img src="/logo.jpg" alt="General Aire Systems" className="h-8 w-auto" />
+            <img src="/logo.jpg" alt="General Aire Systems" className="h-8 max-h-8 w-auto object-contain" />
             <div className="border-l border-slate-200 pl-5">
-              <h1 className="text-2xl font-bold text-[#0066B3] tracking-tight">Filter Cut Database</h1>
-              <p className="text-sm text-slate-500 mt-0.5">Custom filter manufacturing optimization</p>
+              <h1 className="text-xl font-bold text-[#0066B3] tracking-tight">Filter Cut Database</h1>
+              <p className="text-xs text-slate-400 mt-0.5">Custom filter manufacturing optimization</p>
             </div>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             {cartItems.length > 0 && (
-              <button
-                onClick={() => setShowPrint(true)}
-                disabled={!canGenerate}
-                className="bg-[#0066B3] hover:bg-[#005299] disabled:bg-slate-300 disabled:text-slate-500 text-white font-semibold px-5 py-2.5 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm"
-              >
+              <button onClick={() => setShowPrint(true)} disabled={!canGenerate}
+                className="bg-[#0066B3] hover:bg-[#005299] disabled:bg-slate-300 disabled:text-slate-500 text-white font-semibold px-5 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
                 Generate Mfg Sheet
               </button>
             )}
-            <button onClick={() => setShowInventory(!showInventory)} className="text-sm text-slate-600 hover:text-[#0066B3] border border-slate-300 hover:border-[#0066B3] rounded-lg px-4 py-2 transition-colors">
+            <button onClick={() => setShowInventory(!showInventory)} className="text-sm text-slate-500 hover:text-[#0066B3] border border-slate-200 hover:border-[#0066B3] rounded-lg px-4 py-2 transition-colors">
               {showInventory ? "Hide" : "Show"} Inventory
             </button>
           </div>
         </div>
-        <div className="max-w-6xl mx-auto px-8 flex gap-2 pb-0">
+        <div className="max-w-6xl mx-auto px-8 flex gap-1 pb-0">
           {tabs.map(t => (
             <button key={t.id} onClick={() => setView(t.id)}
-              className={`px-5 py-3 text-sm font-medium rounded-t-lg transition-colors border-b-2 ${view === t.id ? "border-[#0066B3] text-[#0066B3] bg-slate-50" : "border-transparent text-slate-500 hover:text-slate-700"}`}>
+              className={`px-5 py-2.5 text-sm font-medium rounded-t-lg transition-colors border-b-2 ${view === t.id ? "border-[#0066B3] text-[#0066B3] bg-blue-50/40" : "border-transparent text-slate-400 hover:text-slate-600"}`}>
               {t.label}
             </button>
           ))}
@@ -726,10 +745,10 @@ export default function FilterCutDB() {
 
         {showInventory && (
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Stock Inventory - {depth}" Depth</div>
+            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">Stock Inventory — {depth}" Depth</div>
             <div className="flex flex-wrap gap-2">
               {STOCK[depth]?.map(([h,w],i) => (
-                <span key={i} className={`text-sm font-mono px-3 py-1.5 rounded-lg border ${isPreferred(h,w) ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-slate-100 border-slate-200 text-slate-600"}`}>
+                <span key={i} className={`text-sm font-mono px-3 py-1.5 rounded-lg border ${isPreferred(h,w) ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-slate-50 border-slate-200 text-slate-500"}`}>
                   {h}x{w}
                 </span>
               ))}
@@ -741,29 +760,27 @@ export default function FilterCutDB() {
         {view === "builder" && (
           <div className="space-y-6">
             <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Order Information</div>
+              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">Order Information</div>
               <div className="flex flex-wrap gap-6">
                 <div>
-                  <label className="text-sm font-medium text-slate-600 block mb-2">Order Number</label>
-                  <input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} placeholder="e.g. ORD0107343"
-                    className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-slate-800 text-sm w-48 focus:outline-none focus:border-[#0066B3] focus:ring-2 focus:ring-[#0066B3]/20 placeholder-slate-400 transition-all" />
+                  <label className="text-sm font-medium text-slate-500 block mb-2">Order Number</label>
+                  <Inp value={orderNumber} onChange={e => setOrderNumber(e.target.value)} placeholder="e.g. ORD0107343" className={`${inputCls} w-48`} />
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-slate-600 block mb-2">Customer Name</label>
-                  <input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="e.g. ACME Corp"
-                    className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-slate-800 text-sm w-60 focus:outline-none focus:border-[#0066B3] focus:ring-2 focus:ring-[#0066B3]/20 placeholder-slate-400 transition-all" />
+                  <label className="text-sm font-medium text-slate-500 block mb-2">Customer Name</label>
+                  <Inp value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="e.g. ACME Corp" className={`${inputCls} w-60`} />
                 </div>
               </div>
             </div>
 
             <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-5">Build Custom Filter</div>
+              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-5">Build Custom Filter</div>
               <div className="mb-6">
-                <label className="text-sm font-medium text-slate-600 block mb-3">Product</label>
-                <div className="flex flex-wrap gap-3">
+                <label className="text-sm font-medium text-slate-500 block mb-3">Product</label>
+                <div className="flex flex-wrap gap-2">
                   {PRODUCTS.map(p => (
                     <button key={p.id} onClick={() => setProductId(p.id)}
-                      className={`px-4 py-2.5 text-sm rounded-lg border-2 transition-all font-semibold ${productId === p.id ? "bg-[#0066B3] border-[#0066B3] text-white shadow-md" : "bg-white border-slate-200 text-slate-600 hover:border-[#0066B3]/50 hover:text-[#0066B3]"}`}>
+                      className={`px-4 py-2 text-sm rounded-lg border-2 transition-all font-medium ${productId === p.id ? "bg-[#0066B3] border-[#0066B3] text-white shadow-md" : "bg-white border-slate-200 text-slate-500 hover:border-[#0066B3]/40 hover:text-[#0066B3]"}`}>
                       {p.label}
                     </button>
                   ))}
@@ -771,34 +788,32 @@ export default function FilterCutDB() {
               </div>
               <div className="flex flex-wrap items-end gap-4">
                 <div>
-                  <label className="text-sm font-medium text-slate-600 block mb-2">Height (H)</label>
-                  <input type="number" value={customH} onChange={e=>setCustomH(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSearch()}
-                    placeholder="e.g. 18" step="0.25" min="1"
-                    className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-slate-800 text-sm w-32 focus:outline-none focus:border-[#0066B3] focus:ring-2 focus:ring-[#0066B3]/20 placeholder-slate-400 transition-all" />
+                  <label className="text-sm font-medium text-slate-500 block mb-2">Height (H)</label>
+                  <Inp type="number" value={customH} onChange={e=>setCustomH(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSearch()}
+                    placeholder="e.g. 18" step="0.25" min="1" className={`${inputCls} w-28`} />
                 </div>
-                <span className="text-slate-400 text-xl pb-2.5 font-light">x</span>
+                <span className="text-slate-300 text-xl pb-2.5 font-light">×</span>
                 <div>
-                  <label className="text-sm font-medium text-slate-600 block mb-2">Width (W)</label>
-                  <input type="number" value={customW} onChange={e=>setCustomW(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSearch()}
-                    placeholder="e.g. 30" step="0.25" min="1"
-                    className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-slate-800 text-sm w-32 focus:outline-none focus:border-[#0066B3] focus:ring-2 focus:ring-[#0066B3]/20 placeholder-slate-400 transition-all" />
+                  <label className="text-sm font-medium text-slate-500 block mb-2">Width (W)</label>
+                  <Inp type="number" value={customW} onChange={e=>setCustomW(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSearch()}
+                    placeholder="e.g. 30" step="0.25" min="1" className={`${inputCls} w-28`} />
                 </div>
-                <span className="text-slate-400 text-xl pb-2.5 font-light">x</span>
+                <span className="text-slate-300 text-xl pb-2.5 font-light">×</span>
                 <div>
-                  <label className="text-sm font-medium text-slate-600 block mb-2">Depth</label>
-                  <div className="flex gap-2">
+                  <label className="text-sm font-medium text-slate-500 block mb-2">Depth</label>
+                  <div className="flex gap-1.5">
                     {[1,2,4].map(d => (
                       <button key={d} onClick={()=>{setDepth(d);setResults(null);setSearched(false);}}
-                        className={`px-4 py-2.5 text-sm rounded-lg border-2 transition-all ${depth===d?"bg-[#0066B3] border-[#0066B3] text-white shadow-md":"bg-white border-slate-200 text-slate-600 hover:border-[#0066B3]/50"}`}>
+                        className={`px-4 py-2.5 text-sm rounded-lg border-2 transition-all font-medium ${depth===d?"bg-[#0066B3] border-[#0066B3] text-white shadow-md":"bg-white border-slate-200 text-slate-500 hover:border-[#0066B3]/40"}`}>
                         {d}"
                       </button>
                     ))}
                   </div>
                 </div>
-                <div className="ml-4">
-                  <label className="text-sm font-medium text-slate-600 block mb-2">Qty</label>
-                  <input type="number" value={qty} onChange={e=>setQty(Math.max(1,parseInt(e.target.value)||1))} min="1"
-                    className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-slate-800 text-sm w-24 focus:outline-none focus:border-[#0066B3] focus:ring-2 focus:ring-[#0066B3]/20 transition-all text-center" />
+                <div className="ml-2">
+                  <label className="text-sm font-medium text-slate-500 block mb-2">Qty</label>
+                  <Inp type="number" value={qty} onChange={e=>setQty(Math.max(1,parseInt(e.target.value)||1))} min="1"
+                    className={`${inputCls} w-20 text-center`} />
                 </div>
                 <button onClick={handleSearch}
                   className="bg-[#0066B3] hover:bg-[#005299] text-white font-semibold px-8 py-2.5 rounded-lg text-sm transition-all shadow-sm hover:shadow-md">
@@ -806,8 +821,12 @@ export default function FilterCutDB() {
                 </button>
               </div>
               {customH && customW && (
-                <div className="mt-4 text-sm text-slate-500 bg-slate-50 rounded-lg px-4 py-2 inline-block">
-                  Exact: <span className="font-mono font-medium text-slate-700">{parseFloat(customH)||0}" H x {parseFloat(customW)||0}" W x {toActualDepth(depth)}" D</span> | Product: <span className="font-medium text-[#0066B3]">{PRODUCTS.find(p=>p.id===productId)?.label}</span>
+                <div className="mt-4 text-sm text-slate-400 bg-slate-50 rounded-lg px-4 py-2 inline-block">
+                  Exact: <span className="font-mono font-medium text-slate-600">{parseFloat(customH)||0}" × {parseFloat(customW)||0}" × {toActualDepth(depth)}" D</span>
+                  <span className="mx-2 text-slate-300">|</span>
+                  <span className="font-medium text-[#0066B3]">{PRODUCTS.find(p=>p.id===productId)?.label}</span>
+                  {qty > 1 && <span className="mx-2 text-slate-300">|</span>}
+                  {qty > 1 && <span className="text-slate-500">Qty {qty} — multi-yield eligible</span>}
                 </div>
               )}
             </div>
@@ -815,54 +834,60 @@ export default function FilterCutDB() {
             {searched && !results && (
               <div className="bg-red-50 border border-red-200 rounded-xl p-8 text-center">
                 <div className="text-red-600 font-semibold text-base">No Solution Found</div>
-                <div className="text-red-500 text-sm mt-2">No stock filter combination in {depth}" depth can produce {customH} x {customW}.</div>
+                <div className="text-red-400 text-sm mt-2">No stock filter combination in {depth}" depth can produce {customH}" × {customW}".</div>
               </div>
             )}
 
             {results && (
               <div className="space-y-4">
                 <div className="bg-white border border-slate-200 rounded-xl px-5 py-4 flex items-center justify-between shadow-sm">
-                  <div className="text-sm text-slate-500">{results.length} option{results.length!==1?"s":""} found - select a drawing below</div>
+                  <div className="text-sm text-slate-400">{results.length} option{results.length!==1?"s":""} found — select a drawing below</div>
                   <button onClick={handleAddToCart}
                     className="bg-[#0066B3] hover:bg-[#005299] text-white font-semibold px-6 py-2.5 rounded-lg text-sm transition-all shadow-sm hover:shadow-md flex items-center gap-2">
                     + Add to Cart <span className="bg-white/20 px-2 py-0.5 rounded text-xs">Option {selectedIdx+1}</span>
                   </button>
                 </div>
-                <div className="rounded-xl border border-slate-200 overflow-hidden bg-white shadow-sm max-h-[620px] overflow-y-auto divide-y divide-slate-100">
+                <div className="rounded-xl border border-slate-200 overflow-hidden bg-white shadow-sm max-h-[640px] overflow-y-auto divide-y divide-slate-100">
                 {results.map((r, i) => (
                   <div key={i} onClick={()=>setSelectedIdx(i)}
-                    className={`cursor-pointer transition-all ${selectedIdx===i ? "bg-blue-50" : i===0 ? "bg-emerald-50/50 hover:bg-emerald-50" : "bg-white hover:bg-slate-50"}`}>
-                    <div className={`px-5 py-3 flex items-center justify-between ${selectedIdx===i?"bg-blue-100/50":i===0?"bg-emerald-100/50":"bg-slate-50"}`}>
+                    className={`cursor-pointer transition-all ${selectedIdx===i ? "bg-blue-50/60" : i===0 ? "bg-emerald-50/30 hover:bg-emerald-50/50" : "bg-white hover:bg-slate-50/50"}`}>
+                    <div className={`px-5 py-3 flex items-center justify-between ${selectedIdx===i?"bg-blue-100/40":"bg-slate-50/80"}`}>
                       <div className="flex items-center gap-3">
                         {selectedIdx===i && <span className="text-xs font-bold text-[#0066B3] bg-blue-100 px-2.5 py-1 rounded-md">SELECTED</span>}
                         {i===0 && selectedIdx!==i && <span className="text-xs font-bold text-emerald-600 bg-emerald-100 px-2.5 py-1 rounded-md">BEST</span>}
-                        <span className="text-sm font-medium text-slate-700">
-                          Option {i+1} - {cutMethodLabel(r)}
+                        {r.isMultiYield && <span className="text-xs font-bold text-violet-600 bg-violet-100 px-2.5 py-1 rounded-md">MULTI-YIELD</span>}
+                        <span className="text-sm font-medium text-slate-600">
+                          Option {i+1} — {getMethodLabel(r)}
                         </span>
                       </div>
-                      <span className="text-sm font-mono text-slate-500">{r.wasteArea.toFixed(1)} sq in waste</span>
+                      <span className="text-sm font-mono text-slate-400">{r.wasteArea.toFixed(1)} sq in waste</span>
                     </div>
                     <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-5">
                       <div className="space-y-4">
                         <div>
-                          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Stock Filter(s)</div>
+                          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Stock Filter(s)</div>
                           {r.stockFilters.map((f,si) => (
-                            <div key={si} className="text-sm font-mono text-slate-800 flex items-center flex-wrap gap-2 py-1">
+                            <div key={si} className="text-sm font-mono text-slate-700 flex items-center flex-wrap gap-2 py-1">
                               {r.stockFilters.length>1&&<span className="text-slate-400">({String.fromCharCode(65+si)})</span>}
-                              <span className="font-semibold">{f.rotated?`${f.origNomH}x${f.origNomW}`:`${f.nomH}x${f.nomW}`} x {depth}</span>
-                              <span className="text-slate-400 text-xs">({f.actH}"x{f.actW}" actual)</span>
+                              <span className="font-semibold">{f.rotated?`${f.origNomH}x${f.origNomW}`:`${f.nomH}x${f.nomW}`} x {depth}"</span>
+                              <span className="text-slate-400 text-xs">({f.actH}"×{f.actW}" actual)</span>
                               {f.rotated&&<span className="text-sky-600 text-xs bg-sky-50 px-1.5 py-0.5 rounded">rotated</span>}
                               {isPreferred(f.nomH,f.nomW)&&<span className="text-amber-600 text-xs bg-amber-50 px-1.5 py-0.5 rounded">preferred</span>}
                             </div>
                           ))}
                         </div>
+                        {r.isMultiYield && (
+                          <div className="text-xs text-violet-600 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2">
+                            Yields <strong>2</strong> custom filters per stock ({r.multiLayout === "2x1" ? "stacked" : "side-by-side"}) — waste strip from middle
+                          </div>
+                        )}
                         <div className="flex gap-6">
-                          <div><div className="text-xs font-semibold text-slate-500 uppercase mb-1">Trim H</div><div className="font-mono text-sm text-slate-700">{r.trimH>0?`${r.trimH}"`:"None"}</div></div>
-                          <div><div className="text-xs font-semibold text-slate-500 uppercase mb-1">Trim W</div><div className="font-mono text-sm text-slate-700">{r.trimW>0?`${r.trimW}"`:"None"}</div></div>
-                          <div><div className="text-xs font-semibold text-slate-500 uppercase mb-1">Cuts</div><div className="font-mono text-sm text-slate-700">{r.cuts}</div></div>
+                          <div><div className="text-xs font-semibold text-slate-400 uppercase mb-1">Trim</div><div className="font-mono text-sm text-slate-600">{r.trimH>0?`${r.trimH}" H`:""}{r.trimH>0&&r.trimW>0?" / ":""}{r.trimW>0?`${r.trimW}" W`:""}{!r.trimH&&!r.trimW?"None":""}</div></div>
+                          <div><div className="text-xs font-semibold text-slate-400 uppercase mb-1">Cuts</div><div className="font-mono text-sm text-slate-600">{r.cuts}</div></div>
+                          {r.isMultiYield && <div><div className="text-xs font-semibold text-slate-400 uppercase mb-1">Stock Needed</div><div className="font-mono text-sm text-[#0066B3] font-bold">{Math.ceil(qty/2)} for {qty} pcs</div></div>}
                         </div>
                       </div>
-                      <div className="bg-slate-100 rounded-lg p-3 border border-slate-200">
+                      <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
                         <CutDiagram result={r} />
                       </div>
                     </div>
@@ -879,22 +904,20 @@ export default function FilterCutDB() {
           <div className="space-y-6">
             <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-wrap gap-6 items-end shadow-sm">
               <div>
-                <label className="text-sm font-medium text-slate-600 block mb-2">Order Number</label>
-                <input value={orderNumber} onChange={e=>setOrderNumber(e.target.value)} placeholder="e.g. ORD0107343"
-                  className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-slate-800 text-sm w-48 focus:outline-none focus:border-[#0066B3] focus:ring-2 focus:ring-[#0066B3]/20 placeholder-slate-400 transition-all"/>
+                <label className="text-sm font-medium text-slate-500 block mb-2">Order Number</label>
+                <Inp value={orderNumber} onChange={e=>setOrderNumber(e.target.value)} placeholder="e.g. ORD0107343" className={`${inputCls} w-48`}/>
               </div>
               <div>
-                <label className="text-sm font-medium text-slate-600 block mb-2">Customer Name</label>
-                <input value={customerName} onChange={e=>setCustomerName(e.target.value)} placeholder="e.g. ACME Corp"
-                  className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-slate-800 text-sm w-60 focus:outline-none focus:border-[#0066B3] focus:ring-2 focus:ring-[#0066B3]/20 placeholder-slate-400 transition-all"/>
+                <label className="text-sm font-medium text-slate-500 block mb-2">Customer Name</label>
+                <Inp value={customerName} onChange={e=>setCustomerName(e.target.value)} placeholder="e.g. ACME Corp" className={`${inputCls} w-60`}/>
               </div>
               <button onClick={() => setView("builder")}
-                className="border-2 border-slate-200 hover:border-[#0066B3] text-slate-600 hover:text-[#0066B3] px-5 py-2.5 rounded-lg text-sm transition-all font-medium">
+                className="border-2 border-slate-200 hover:border-[#0066B3] text-slate-500 hover:text-[#0066B3] px-5 py-2.5 rounded-lg text-sm transition-all font-medium">
                 + Add Filter
               </button>
               {cartItems.length > 0 && (
                 <button onClick={clearCart}
-                  className="border-2 border-red-200 hover:border-red-400 text-red-500 hover:text-red-600 px-5 py-2.5 rounded-lg text-sm transition-all font-medium">
+                  className="border-2 border-red-200 hover:border-red-400 text-red-400 hover:text-red-500 px-5 py-2.5 rounded-lg text-sm transition-all font-medium">
                   Clear Cart
                 </button>
               )}
@@ -902,7 +925,7 @@ export default function FilterCutDB() {
 
             {cartItems.length === 0 ? (
               <div className="bg-white border border-slate-200 rounded-xl p-12 text-center shadow-sm">
-                <div className="text-slate-500 text-base">No items in cart yet.</div>
+                <div className="text-slate-400 text-base">No items in cart yet.</div>
                 <button onClick={()=>setView("builder")} className="mt-4 text-sm text-[#0066B3] hover:underline font-medium">Go to Filter Builder</button>
               </div>
             ) : (
@@ -910,47 +933,52 @@ export default function FilterCutDB() {
                 {cartItems.map((item, idx) => {
                   const prod = PRODUCTS.find(p=>p.id===item.productId)||PRODUCTS[0];
                   const r = item.selectedResult;
+                  const yieldsPerStock = r.yieldsPerStock || 1;
+                  const stockNeeded = r.isMultiYield ? Math.ceil(item.qty / yieldsPerStock) : item.qty;
                   return (
                     <div key={item.id} className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
                       <div className="px-5 py-3.5 bg-slate-50 flex items-center justify-between border-b border-slate-100">
-                        <div className="flex items-center gap-4">
-                          <span className="text-xs font-bold text-slate-500 bg-slate-200 px-2.5 py-1 rounded-md">LINE {idx+1}</span>
-                          <span className="text-sm font-mono font-semibold text-slate-800">{item.customH}" x {item.customW}" x {toActualDepth(r.depth)}"</span>
-                          <span className="text-xs text-[#0066B3] bg-blue-50 border border-blue-100 px-2.5 py-1 rounded-md font-medium">{prod.label}</span>
-                          <span className="text-xs text-slate-500">
-                            {cutMethodLabel(r)}
-                          </span>
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-bold text-slate-400 bg-slate-200 px-2.5 py-1 rounded-md">LINE {idx+1}</span>
+                          <span className="text-sm font-mono font-semibold text-slate-700">{item.customH}" × {item.customW}" × {r.depth}"</span>
+                          <span className="text-xs text-[#0066B3] bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md font-medium">{prod.short}</span>
+                          {r.isMultiYield && <span className="text-xs text-violet-600 bg-violet-50 px-2 py-0.5 rounded-md font-medium">Multi-Yield</span>}
+                          <span className="text-xs text-slate-400">{getMethodLabel(r)}</span>
                         </div>
                         <div className="flex items-center gap-4">
                           <div className="flex items-center gap-2">
-                            <label className="text-sm text-slate-500">Qty:</label>
-                            <input type="number" value={item.qty} min="1" onChange={e=>updateQty(item.id,e.target.value)}
+                            <label className="text-sm text-slate-400">Qty:</label>
+                            <Inp type="number" value={item.qty} min="1" onChange={e=>updateQty(item.id,e.target.value)}
                               className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-800 text-sm w-20 focus:outline-none focus:border-[#0066B3] text-center"/>
                           </div>
-                          <button onClick={()=>removeCartItem(item.id)} className="text-red-500 hover:text-red-600 text-sm transition-colors font-medium">Delete Line</button>
+                          <button onClick={()=>removeCartItem(item.id)} className="text-red-400 hover:text-red-500 text-sm transition-colors font-medium">Remove</button>
                         </div>
                       </div>
                       <div className="p-5 grid grid-cols-1 md:grid-cols-3 gap-5">
                         <div className="md:col-span-2 space-y-3">
-                          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Stock Filters Needed (per custom filter)</div>
+                          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Stock Filters Required</div>
                           {r.stockFilters.map((sf,si)=>(
-                            <div key={si} className="text-sm font-mono text-slate-700 flex items-center gap-2">
+                            <div key={si} className="text-sm font-mono text-slate-600 flex items-center gap-2">
                               {r.stockFilters.length>1&&<span className="text-slate-400 text-xs">{String.fromCharCode(65+si)}:</span>}
-                              <span className="text-slate-800 font-semibold">{sf.rotated?`${sf.origNomH}x${sf.origNomW}`:`${sf.nomH}x${sf.nomW}`} x {r.depth}"</span>
-                              <span className="text-slate-400 text-xs">({sf.actH}"x{sf.actW}")</span>
+                              <span className="text-slate-700 font-semibold">{sf.rotated?`${sf.origNomH}x${sf.origNomW}`:`${sf.nomH}x${sf.nomW}`} x {r.depth}"</span>
+                              <span className="text-slate-400 text-xs">({sf.actH}"×{sf.actW}")</span>
                               {sf.rotated&&<span className="text-sky-600 text-xs bg-sky-50 px-1.5 py-0.5 rounded">rotated</span>}
                               {isPreferred(sf.nomH,sf.nomW)&&<span className="text-amber-600 text-xs bg-amber-50 px-1.5 py-0.5 rounded">preferred</span>}
-                              <span className="text-slate-300">x</span>
-                              <span className="text-[#0066B3] font-bold">{item.qty} pcs</span>
+                              <span className="text-slate-300">→</span>
+                              <span className="text-[#0066B3] font-bold">pull {stockNeeded}</span>
                             </div>
                           ))}
-                          <div className="flex gap-6 pt-2">
-                            <div><span className="text-sm text-slate-500">Trim H: </span><span className="text-sm font-mono text-slate-700">{r.trimH>0?`${r.trimH}"`:"None"}</span></div>
-                            <div><span className="text-sm text-slate-500">Trim W: </span><span className="text-sm font-mono text-slate-700">{r.trimW>0?`${r.trimW}"`:"None"}</span></div>
-                            <div><span className="text-sm text-slate-500">Cuts: </span><span className="text-sm font-mono text-slate-700">{r.cuts}</span></div>
+                          <div className="flex gap-6 pt-2 text-sm">
+                            <div><span className="text-slate-400">Trim: </span><span className="font-mono text-slate-600">{r.trimH>0?`${r.trimH}" H`:""}{r.trimH>0&&r.trimW>0?" / ":""}{r.trimW>0?`${r.trimW}" W`:""}{!r.trimH&&!r.trimW?"None":""}</span></div>
+                            <div><span className="text-slate-400">Cuts: </span><span className="font-mono text-slate-600">{r.cuts}</span></div>
                           </div>
+                          {r.isMultiYield && (
+                            <div className="text-xs text-violet-600 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2 inline-block">
+                              Multi-yield: {r.multiLayout === "2x1" ? "stacked" : "side-by-side"} — {yieldsPerStock} per stock → pull {stockNeeded} for {item.qty} pcs
+                            </div>
+                          )}
                         </div>
-                        <div className="bg-slate-100 rounded-lg p-3 border border-slate-200">
+                        <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
                           <CutDiagram result={r} compact={true}/>
                         </div>
                       </div>
@@ -958,8 +986,8 @@ export default function FilterCutDB() {
                   );
                 })}
                 <div className="flex items-center justify-between pt-4 border-t border-slate-200">
-                  <div className="text-sm text-slate-500">
-                    {cartItems.length} line item{cartItems.length!==1?"s":""} | {totalCustomFilters} total custom filters | {totalStockFilters} stock filters to pull
+                  <div className="text-sm text-slate-400">
+                    {cartItems.length} line item{cartItems.length!==1?"s":""} · {totalCustomFilters} custom filters · {totalStockFilters} stock to pull
                   </div>
                   <button onClick={()=>setShowPrint(true)} disabled={!canGenerate}
                     className="bg-[#0066B3] hover:bg-[#005299] disabled:bg-slate-300 disabled:text-slate-500 text-white font-semibold px-6 py-2.5 rounded-lg text-sm transition-all shadow-sm hover:shadow-md flex items-center gap-2">
@@ -978,50 +1006,53 @@ export default function FilterCutDB() {
             <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Stock Allocation Summary</div>
-                  {orderNumber && <div className="text-base text-slate-800 font-medium mt-2">Order: <span className="text-[#0066B3]">{orderNumber}</span>{customerName && <span className="text-slate-600"> - {customerName}</span>}</div>}
+                  <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Stock Allocation Summary</div>
+                  {orderNumber && <div className="text-base text-slate-700 font-medium mt-2">Order: <span className="text-[#0066B3]">{orderNumber}</span>{customerName && <span className="text-slate-500"> — {customerName}</span>}</div>}
                 </div>
                 <div className="flex gap-6 text-center">
-                  <div><div className="text-3xl font-bold text-slate-800">{cartItems.length}</div><div className="text-xs text-slate-500 mt-1">Line Items</div></div>
-                  <div className="border-l border-slate-200 pl-6"><div className="text-3xl font-bold text-[#0066B3]">{totalCustomFilters}</div><div className="text-xs text-slate-500 mt-1">Custom Filters</div></div>
-                  <div className="border-l border-slate-200 pl-6"><div className="text-3xl font-bold text-emerald-600">{totalStockFilters}</div><div className="text-xs text-slate-500 mt-1">Stock to Pull</div></div>
+                  <div><div className="text-3xl font-bold text-slate-700">{cartItems.length}</div><div className="text-xs text-slate-400 mt-1">Line Items</div></div>
+                  <div className="border-l border-slate-200 pl-6"><div className="text-3xl font-bold text-[#0066B3]">{totalCustomFilters}</div><div className="text-xs text-slate-400 mt-1">Custom Filters</div></div>
+                  <div className="border-l border-slate-200 pl-6"><div className="text-3xl font-bold text-emerald-600">{totalStockFilters}</div><div className="text-xs text-slate-400 mt-1">Stock to Pull</div></div>
                 </div>
               </div>
             </div>
 
             {cartItems.length === 0 ? (
               <div className="bg-white border border-slate-200 rounded-xl p-12 text-center shadow-sm">
-                <div className="text-slate-500 text-base">No items in cart yet.</div>
+                <div className="text-slate-400 text-base">No items in cart yet.</div>
               </div>
             ) : (
               <>
                 <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                  <div className="px-5 py-4 bg-slate-50 text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-100">Order Line Items</div>
+                  <div className="px-5 py-4 bg-slate-50 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-100">Order Line Items</div>
                   <table className="w-full text-sm">
                     <thead><tr className="border-b border-slate-200">
-                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Line</th>
-                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Product</th>
-                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Custom Size</th>
-                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Qty</th>
-                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Cut Method</th>
-                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Stock Required</th>
+                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Line</th>
+                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Product</th>
+                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Custom Size</th>
+                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Qty</th>
+                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Cut Method</th>
+                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Stock Required</th>
                     </tr></thead>
                     <tbody>
                       {cartItems.map((item, idx) => {
                         const prod = PRODUCTS.find(p=>p.id===item.productId)||PRODUCTS[0];
                         const r = item.selectedResult;
                         if (!r) return null;
+                        const yieldsPerStock = r.yieldsPerStock || 1;
+                        const stockNeeded = r.isMultiYield ? Math.ceil(item.qty / yieldsPerStock) : item.qty;
                         return (
-                          <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50">
-                            <td className="px-5 py-4 text-slate-500">{idx+1}</td>
+                          <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50/50">
+                            <td className="px-5 py-4 text-slate-400">{idx+1}</td>
                             <td className="px-5 py-4"><span className="text-xs font-medium text-[#0066B3] bg-blue-50 px-2 py-1 rounded">{prod.short}</span></td>
-                            <td className="px-5 py-4 font-mono text-slate-800 font-semibold">{item.customH}" x {item.customW}" x {toActualDepth(r.depth)}"</td>
+                            <td className="px-5 py-4 font-mono text-slate-700 font-semibold">{item.customH}" × {item.customW}" × {r.depth}"</td>
                             <td className="px-5 py-4 text-[#0066B3] font-bold">{item.qty}</td>
-                            <td className="px-5 py-4 text-slate-500 text-xs">{cutMethodLabel(r)}</td>
-                            <td className="px-5 py-4 text-sm font-mono text-slate-600">
-                              {r.stockFilters.map((sf,si)=>(
-                                <div key={si}>{sf.rotated?`${sf.origNomH}x${sf.origNomW}`:`${sf.nomH}x${sf.nomW}`} x {r.depth}" x {item.qty}</div>
-                              ))}
+                            <td className="px-5 py-4 text-slate-500 text-xs">{getMethodLabel(r)}</td>
+                            <td className="px-5 py-4 text-sm font-mono text-slate-500">
+                              {r.stockFilters.map((sf,si)=>{
+                                const nomLabel = sf.rotated?`${sf.origNomH}x${sf.origNomW}`:`${sf.nomH}x${sf.nomW}`;
+                                return <div key={si}>pull {stockNeeded} × {nomLabel} x {r.depth}"</div>;
+                              })}
                             </td>
                           </tr>
                         );
@@ -1031,33 +1062,33 @@ export default function FilterCutDB() {
                 </div>
 
                 <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                  <div className="px-5 py-4 bg-slate-50 text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-100">Stock Filter Pull List - Total Units to Allocate</div>
+                  <div className="px-5 py-4 bg-slate-50 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-100">Stock Filter Pull List — Total Units to Allocate</div>
                   <table className="w-full text-sm">
                     <thead><tr className="border-b border-slate-200">
-                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">#</th>
-                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Product</th>
-                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Stock Filter Size</th>
-                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Preferred?</th>
-                      <th className="text-right px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Qty to Pull</th>
+                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">#</th>
+                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Product</th>
+                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Stock Filter Size</th>
+                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Preferred?</th>
+                      <th className="text-right px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Qty to Pull</th>
                     </tr></thead>
                     <tbody>
                       {stockSummary.map((row, idx) => {
                         const [nomH, nomW] = row.sizeKey.split(" x ")[0].split("x").map(Number);
                         const pref = isPreferred(nomH, nomW);
                         return (
-                          <tr key={idx} className="border-b border-slate-100 hover:bg-slate-50">
+                          <tr key={idx} className="border-b border-slate-100 hover:bg-slate-50/50">
                             <td className="px-5 py-4 text-slate-400 text-xs">{idx+1}</td>
                             <td className="px-5 py-4">
                               <span className="text-xs font-medium text-[#0066B3] bg-blue-50 border border-blue-100 px-2.5 py-1 rounded whitespace-nowrap">{row.productLabel}</span>
                             </td>
-                            <td className="px-5 py-4 font-mono text-slate-800 font-semibold">{row.sizeKey}</td>
-                            <td className="px-5 py-4">{pref ? <span className="text-amber-600 text-xs bg-amber-50 px-2 py-1 rounded">Preferred</span> : <span className="text-slate-400 text-xs">-</span>}</td>
+                            <td className="px-5 py-4 font-mono text-slate-700 font-semibold">{row.sizeKey}</td>
+                            <td className="px-5 py-4">{pref ? <span className="text-amber-600 text-xs bg-amber-50 px-2 py-1 rounded">Preferred</span> : <span className="text-slate-300 text-xs">—</span>}</td>
                             <td className="px-5 py-4 text-right font-mono text-[#0066B3] font-bold text-lg">{row.qty}</td>
                           </tr>
                         );
                       })}
                       <tr className="bg-slate-50 font-bold">
-                        <td colSpan={4} className="px-5 py-4 text-slate-800">TOTAL STOCK FILTERS</td>
+                        <td colSpan={4} className="px-5 py-4 text-slate-700">TOTAL STOCK FILTERS</td>
                         <td className="px-5 py-4 text-right text-[#0066B3] text-xl font-bold">{totalStockFilters}</td>
                       </tr>
                     </tbody>
