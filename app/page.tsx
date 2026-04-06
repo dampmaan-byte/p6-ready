@@ -73,46 +73,6 @@ function findBestCut(customH, customW, depth, qty = 1) {
     }
   }
 
-  // ── MULTI-YIELD (only when qty > 1) — max 2 per stock ──────────────────
-  if (qty > 1) {
-    for (const f of allOrientations) {
-      // 2×1: two custom filters stacked vertically, waste in middle
-      const twoH = needH * 2;
-      if (f.actH >= twoH && f.actW >= needW) {
-        const middleWaste = +(f.actH - twoH).toFixed(4);
-        const sideTrim = +(f.actW - needW).toFixed(4);
-        if (isSafeCut(middleWaste) && isSafeCut(sideTrim)) {
-          const wasteArea = +((f.actH * f.actW) - (needH * needW * 2)).toFixed(4);
-          const cuts = 1 + (middleWaste > 0 ? 1 : 0) + (sideTrim > 0 ? 1 : 0);
-          results.push({
-            type:"multi-yield-2x1", isMultiYield:true, yieldsPerStock:2, multiLayout:"2x1",
-            stockFilters:[{ nomH:f.nomH, nomW:f.nomW, actH:f.actH, actW:f.actW, rotated:f.rotated, origNomH:f.origNomH, origNomW:f.origNomW }],
-            middleWaste, sideTrim,
-            trimH:sideTrim, trimW:middleWaste,
-            wasteArea, cuts, customActH:needH, customActW:needW, depth
-          });
-        }
-      }
-      // 1×2: two custom filters side by side, waste in middle
-      const twoW = needW * 2;
-      if (f.actH >= needH && f.actW >= twoW) {
-        const middleWaste = +(f.actW - twoW).toFixed(4);
-        const topTrim = +(f.actH - needH).toFixed(4);
-        if (isSafeCut(middleWaste) && isSafeCut(topTrim)) {
-          const wasteArea = +((f.actH * f.actW) - (needH * needW * 2)).toFixed(4);
-          const cuts = 1 + (middleWaste > 0 ? 1 : 0) + (topTrim > 0 ? 1 : 0);
-          results.push({
-            type:"multi-yield-1x2", isMultiYield:true, yieldsPerStock:2, multiLayout:"1x2",
-            stockFilters:[{ nomH:f.nomH, nomW:f.nomW, actH:f.actH, actW:f.actW, rotated:f.rotated, origNomH:f.origNomH, origNomW:f.origNomW }],
-            middleWaste, topTrim,
-            trimH:topTrim, trimW:middleWaste,
-            wasteArea, cuts, customActH:needH, customActW:needW, depth
-          });
-        }
-      }
-    }
-  }
-
   // ── LINEAR (butt joint) ─────────────────────────────────────────────────
   const byActH = {};
   for (const f of allOrientations) { const hKey = f.actH.toFixed(2); if (!byActH[hKey]) byActH[hKey]=[]; byActH[hKey].push(f); }
@@ -162,21 +122,72 @@ function findBestCut(customH, customW, depth, qty = 1) {
     for (const rh of hCombos) { const totalH=rh.reduce((a,b)=>a+b,0); if(totalH<needH) continue; for (const cw of wCombos) { const totalW=cw.reduce((a,b)=>a+b,0); if(totalW<needW) continue; addGridResult(rh,cw); } }
   }
 
-  // ── SORT ────────────────────────────────────────────────────────────────
-  // Priority: multi-yield first → preferred stock → least waste → fewer stock filters → fewer cuts
-  const prefScore = (r) => {
+  // ── MULTI-YIELD: 2 custom filters from 1 stock arrangement (qty > 1 only) ──
+  if ((qty || 1) > 1) {
+    const mapF = f => ({ nomH:f.nomH, nomW:f.nomW, actH:f.actH, actW:f.actW, rotated:f.rotated, origNomH:f.origNomH, origNomW:f.origNomW });
+    const addMultiYield = (filterCombo, combinedH, combinedW, extraJoints) => {
+      const joints = extraJoints != null ? extraJoints : filterCombo.length - 1;
+      // 2×1: two customs stacked in height, waste in middle
+      if (combinedH >= needH * 2) {
+        const midWaste = +(combinedH - needH * 2).toFixed(4);
+        const trimW = +(combinedW - needW).toFixed(4);
+        if (combinedW >= needW && isSafeCut(midWaste) && isSafeCut(trimW)) {
+          const wasteArea = +((combinedH * combinedW) - (needH * needW * 2)).toFixed(4);
+          const cuts = 1 + joints + (midWaste > 0 ? 1 : 0) + (trimW > 0 ? 1 : 0);
+          results.push({ type:"multi-2x1", multiYield:true, yieldsPerStock:2, splitDirection:"height",
+            layout: filterCombo.length > 1 ? "linear" : undefined,
+            stockFilters: filterCombo.map(mapF), trimH:midWaste, trimW, combinedW, combinedH,
+            wasteArea, cuts, customActH:needH, customActW:needW, depth });
+        }
+      }
+      // 1×2: two customs side by side in width, waste in middle
+      if (combinedH >= needH && combinedW >= needW * 2) {
+        const trimH = +(combinedH - needH).toFixed(4);
+        const midWaste = +(combinedW - needW * 2).toFixed(4);
+        if (isSafeCut(trimH) && isSafeCut(midWaste)) {
+          const wasteArea = +((combinedH * combinedW) - (needH * needW * 2)).toFixed(4);
+          const cuts = 1 + joints + (trimH > 0 ? 1 : 0) + (midWaste > 0 ? 1 : 0);
+          results.push({ type:"multi-1x2", multiYield:true, yieldsPerStock:2, splitDirection:"width",
+            layout: filterCombo.length > 1 ? "linear" : undefined,
+            stockFilters: filterCombo.map(mapF), trimH, trimW:midWaste, combinedW, combinedH,
+            wasteArea, cuts, customActH:needH, customActW:needW, depth });
+        }
+      }
+    };
+    // Single stock multi-yield
+    for (const f of allOrientations) addMultiYield([f], f.actH, f.actW);
+    // Linear butt multi-yield (2, 3, 4 filters butted → split for 2 custom)
+    for (const [hKey, filters] of Object.entries(byActH)) {
+      const actH = parseFloat(hKey);
+      const tryCombo = (combo) => addMultiYield(combo, actH, combo.reduce((s,f)=>s+f.actW,0));
+      for (let i=0;i<filters.length;i++) for (let j=i;j<filters.length;j++) tryCombo([filters[i],filters[j]]);
+      for (let i=0;i<filters.length;i++) for (let j=i;j<filters.length;j++) for (let k=j;k<filters.length;k++) tryCombo([filters[i],filters[j],filters[k]]);
+      for (let i=0;i<filters.length;i++) for (let j=i;j<filters.length;j++) for (let k=j;k<filters.length;k++) for (let l=k;l<filters.length;l++) tryCombo([filters[i],filters[j],filters[k],filters[l]]);
+    }
+  }
+
+  // ── SORT (tier-based) ──────────────────────────────────────────────────
+  const tierScore = (r) => {
     const allPref = r.stockFilters.every(f => isPreferred(f.nomH, f.nomW));
     const somePref = r.stockFilters.some(f => isPreferred(f.nomH, f.nomW));
-    return allPref ? 0 : somePref ? 1 : 2;
+    const allSame = r.stockFilters.every(f => f.nomH===r.stockFilters[0].nomH && f.nomW===r.stockFilters[0].nomW);
+    if (r.multiYield && allPref && allSame) return -3;
+    if (r.multiYield && allPref) return -2;
+    if (r.multiYield) return -1;
+    if (allPref && allSame && r.stockFilters.length > 1) return 0;
+    if (r.type === "single" && allPref) return 1;
+    if (allPref) return 2;
+    if (r.type === "single") return 3;
+    if (somePref) return 4;
+    return 5;
   };
   results.sort((a, b) =>
-    (a.isMultiYield ? 0 : 1) - (b.isMultiYield ? 0 : 1) ||
-    prefScore(a) - prefScore(b) ||
-    a.wasteArea - b.wasteArea ||
+    tierScore(a) - tierScore(b) ||
     a.stockFilters.length - b.stockFilters.length ||
+    a.wasteArea - b.wasteArea ||
     a.cuts - b.cuts
   );
-  return results.length > 0 ? results.slice(0, 8) : null;
+  return results.length > 0 ? results.slice(0, 12) : null;
 }
 
 // ─── SVG CUT DIAGRAM ─────────────────────────────────────────────────────────
@@ -213,94 +224,67 @@ function CutDiagram({ result, compact = false, printMode = false }) {
   const fontSize = compact ? 9 : 11;
 
   // ── MULTI-YIELD 2×1 (stacked vertically, waste in middle) ──────────
-  if (result.type === "multi-yield-2x1") {
-    const f = result.stockFilters[0];
-    const scale = Math.min(drawW / f.actW, drawH / f.actH);
-    const rw = f.actW * scale, rh = f.actH * scale;
+  if (result.type === "multi-2x1") {
+    const filters = result.stockFilters;
+    const totalStockW = result.combinedW || filters.reduce((s,f)=>s+f.actW,0);
+    const totalStockH = result.combinedH || filters[0].actH;
+    const scale = Math.min(drawW / totalStockW, drawH / totalStockH);
+    const rw = totalStockW * scale, rh = totalStockH * scale;
     const ox = (svgW - rw) / 2, oy = (svgH - rh) / 2;
-    const ch = result.customActH * scale;
-    const cw = result.customActW * scale;
-    const mw = result.middleWaste * scale;
+    const ch = result.customActH * scale, cw = result.customActW * scale;
+    const midH = result.trimH * scale;
+    const scaledWidths = filters.map(f => f.actW * scale);
+    const xPositions = []; let lx = ox; for (const sw of scaledWidths) { xPositions.push(lx); lx += sw; }
     return (
       <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full" style={{ maxHeight: svgH, background: svgBg }}>
-        {/* Stock outline */}
-        <rect x={ox} y={oy} width={rw} height={rh} fill={stockFill} stroke={stockStroke} strokeWidth={1.5} rx={2}/>
-        {/* Top KEEP */}
+        {filters.map((f,i) => <rect key={i} x={xPositions[i]} y={oy} width={scaledWidths[i]} height={rh} fill={stockFill} stroke={filterColors[i%filterColors.length]} strokeWidth={1.5} rx={2} strokeDasharray={i>0?"6 3":"none"}/>)}
         <rect x={ox} y={oy} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
-        <text x={ox+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?10:12} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 1</text>
-        {/* Middle waste zone */}
-        {result.middleWaste > 0 && (
-          <>
-            <rect x={ox} y={oy+ch} width={rw} height={mw} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>
-            <text x={ox+rw/2} y={oy+ch+mw/2} textAnchor="middle" fill={wasteTextFill} fontSize={8} fontFamily="monospace" dominantBaseline="middle">{result.middleWaste}" waste</text>
-          </>
-        )}
-        {/* Bottom KEEP */}
-        <rect x={ox} y={oy+ch+mw} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
-        <text x={ox+cw/2} y={oy+ch+mw+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?10:12} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 2</text>
-        {/* Side trim */}
-        {result.sideTrim > 0 && (
-          <>
-            <rect x={ox+cw} y={oy} width={rw-cw} height={rh} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>
-            <text x={ox+cw+(rw-cw)/2} y={oy+rh/2} textAnchor="middle" fill={wasteTextFill} fontSize={8} fontFamily="monospace" dominantBaseline="middle" transform={`rotate(-90,${ox+cw+(rw-cw)/2},${oy+rh/2})`}>{result.sideTrim}" trim</text>
-          </>
-        )}
-        {/* Dimensions */}
+        <text x={ox+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 1</text>
+        {midH > 0 && <rect x={ox} y={oy+ch} width={rw} height={midH} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
+        {midH > 0 && <text x={ox+rw/2} y={oy+ch+midH/2} textAnchor="middle" fill={wasteTextFill} fontSize={8} fontFamily="monospace" dominantBaseline="middle">{result.trimH}" mid cap</text>}
+        <rect x={ox} y={oy+ch+midH} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
+        <text x={ox+cw/2} y={oy+ch+midH+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 2</text>
+        {result.trimW > 0 && <rect x={ox+cw} y={oy} width={rw-cw} height={rh} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
+        {xPositions.slice(1).map((xp,i) => <line key={i} x1={xp} y1={oy} x2={xp} y2={oy+rh} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/>)}
         <line x1={ox} y1={oy-10} x2={ox+cw} y2={oy-10} stroke={dimStroke} strokeWidth={1}/>
         <text x={ox+cw/2} y={oy-15} textAnchor="middle" fill={dimFill} fontSize={fontSize} fontFamily="monospace">{result.customActW}"</text>
         <line x1={ox-10} y1={oy} x2={ox-10} y2={oy+ch} stroke={dimStroke} strokeWidth={1}/>
         <text x={ox-14} y={oy+ch/2} textAnchor="end" fill={dimFill} fontSize={fontSize} fontFamily="monospace" dominantBaseline="middle">{result.customActH}"</text>
-        <line x1={ox+rw+10} y1={oy} x2={ox+rw+10} y2={oy+rh} stroke={stkDimStroke} strokeWidth={1}/>
-        <text x={ox+rw+14} y={oy+rh/2} textAnchor="start" fill={stkDimFill} fontSize={fontSize-1} fontFamily="monospace" dominantBaseline="middle">{f.actH}" stk</text>
-        {/* Split line */}
-        <line x1={ox} y1={oy+ch} x2={ox+cw} y2={oy+ch} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/>
-        {result.middleWaste > 0 && <line x1={ox} y1={oy+ch+mw} x2={ox+cw} y2={oy+ch+mw} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/>}
+        {filters.length > 1 && <><line x1={ox} y1={oy+rh+10} x2={ox+rw} y2={oy+rh+10} stroke={stkDimStroke} strokeWidth={1}/><text x={ox+rw/2} y={oy+rh+22} textAnchor="middle" fill={stkDimFill} fontSize={fontSize-1} fontFamily="monospace">{totalStockW.toFixed(1)}" combined</text></>}
+        {filters.map((f,i) => <text key={i} x={xPositions[i]+scaledWidths[i]/2} y={oy+rh+(filters.length>1?34:14)} textAnchor="middle" fill={labelColors[i%labelColors.length]} fontSize={Math.min(8,80/filters.length)} fontFamily="monospace">{String.fromCharCode(65+i)}: {f.nomH}x{f.nomW}</text>)}
       </svg>
     );
   }
 
   // ── MULTI-YIELD 1×2 (side by side, waste in middle) ────────────────
-  if (result.type === "multi-yield-1x2") {
-    const f = result.stockFilters[0];
-    const scale = Math.min(drawW / f.actW, drawH / f.actH);
-    const rw = f.actW * scale, rh = f.actH * scale;
+  if (result.type === "multi-1x2") {
+    const filters = result.stockFilters;
+    const totalStockW = result.combinedW || filters.reduce((s,f)=>s+f.actW,0);
+    const totalStockH = result.combinedH || filters[0].actH;
+    const scale = Math.min(drawW / totalStockW, drawH / totalStockH);
+    const rw = totalStockW * scale, rh = totalStockH * scale;
     const ox = (svgW - rw) / 2, oy = (svgH - rh) / 2;
-    const ch = result.customActH * scale;
-    const cw = result.customActW * scale;
-    const mw = result.middleWaste * scale;
+    const ch = result.customActH * scale, cw = result.customActW * scale;
+    const midW = result.trimW * scale;
+    const scaledWidths = filters.map(f => f.actW * scale);
+    const xPositions = []; let lx = ox; for (const sw of scaledWidths) { xPositions.push(lx); lx += sw; }
     return (
       <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full" style={{ maxHeight: svgH, background: svgBg }}>
-        <rect x={ox} y={oy} width={rw} height={rh} fill={stockFill} stroke={stockStroke} strokeWidth={1.5} rx={2}/>
-        {/* Left KEEP */}
+        {filters.map((f,i) => <rect key={i} x={xPositions[i]} y={oy} width={scaledWidths[i]} height={rh} fill={stockFill} stroke={filterColors[i%filterColors.length]} strokeWidth={1.5} rx={2} strokeDasharray={i>0?"6 3":"none"}/>)}
         <rect x={ox} y={oy} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
-        <text x={ox+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?10:12} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 1</text>
-        {/* Middle waste zone */}
-        {result.middleWaste > 0 && (
-          <>
-            <rect x={ox+cw} y={oy} width={mw} height={rh} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>
-            <text x={ox+cw+mw/2} y={oy+rh/2} textAnchor="middle" fill={wasteTextFill} fontSize={8} fontFamily="monospace" dominantBaseline="middle" transform={`rotate(-90,${ox+cw+mw/2},${oy+rh/2})`}>{result.middleWaste}" waste</text>
-          </>
-        )}
-        {/* Right KEEP */}
-        <rect x={ox+cw+mw} y={oy} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
-        <text x={ox+cw+mw+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?10:12} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 2</text>
-        {/* Top trim */}
-        {result.topTrim > 0 && (
-          <>
-            <rect x={ox} y={oy+ch} width={rw} height={rh-ch} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>
-            <text x={ox+rw/2} y={oy+ch+(rh-ch)/2} textAnchor="middle" fill={wasteTextFill} fontSize={8} fontFamily="monospace" dominantBaseline="middle">{result.topTrim}" trim</text>
-          </>
-        )}
-        {/* Dimensions */}
+        <text x={ox+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 1</text>
+        {midW > 0 && <rect x={ox+cw} y={oy} width={midW} height={rh} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
+        {midW > 0 && <text x={ox+cw+midW/2} y={oy+rh/2} textAnchor="middle" fill={wasteTextFill} fontSize={8} fontFamily="monospace" dominantBaseline="middle" transform={`rotate(-90,${ox+cw+midW/2},${oy+rh/2})`}>{result.trimW}" mid cap</text>}
+        <rect x={ox+cw+midW} y={oy} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
+        <text x={ox+cw+midW+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 2</text>
+        {result.trimH > 0 && <rect x={ox} y={oy+ch} width={rw} height={rh-ch} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
+        {xPositions.slice(1).map((xp,i) => <line key={i} x1={xp} y1={oy} x2={xp} y2={oy+rh} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/>)}
         <line x1={ox} y1={oy-10} x2={ox+cw} y2={oy-10} stroke={dimStroke} strokeWidth={1}/>
         <text x={ox+cw/2} y={oy-15} textAnchor="middle" fill={dimFill} fontSize={fontSize} fontFamily="monospace">{result.customActW}"</text>
         <line x1={ox-10} y1={oy} x2={ox-10} y2={oy+ch} stroke={dimStroke} strokeWidth={1}/>
         <text x={ox-14} y={oy+ch/2} textAnchor="end" fill={dimFill} fontSize={fontSize} fontFamily="monospace" dominantBaseline="middle">{result.customActH}"</text>
-        <line x1={ox} y1={oy+rh+10} x2={ox+rw} y2={oy+rh+10} stroke={stkDimStroke} strokeWidth={1}/>
-        <text x={ox+rw/2} y={oy+rh+22} textAnchor="middle" fill={stkDimFill} fontSize={fontSize-1} fontFamily="monospace">{f.actW}" stk</text>
-        {/* Split lines */}
-        <line x1={ox+cw} y1={oy} x2={ox+cw} y2={oy+ch} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/>
-        {result.middleWaste > 0 && <line x1={ox+cw+mw} y1={oy} x2={ox+cw+mw} y2={oy+ch} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/>}
+        {filters.length > 1 && <><line x1={ox} y1={oy+rh+10} x2={ox+rw} y2={oy+rh+10} stroke={stkDimStroke} strokeWidth={1}/><text x={ox+rw/2} y={oy+rh+22} textAnchor="middle" fill={stkDimFill} fontSize={fontSize-1} fontFamily="monospace">{totalStockW.toFixed(1)}" combined</text></>}
+        {filters.map((f,i) => <text key={i} x={xPositions[i]+scaledWidths[i]/2} y={oy+rh+(filters.length>1?34:14)} textAnchor="middle" fill={labelColors[i%labelColors.length]} fontSize={Math.min(8,80/filters.length)} fontFamily="monospace">{String.fromCharCode(65+i)}: {f.nomH}x{f.nomW}</text>)}
       </svg>
     );
   }
@@ -392,10 +376,13 @@ function CutDiagram({ result, compact = false, printMode = false }) {
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 function getMethodLabel(r) {
-  if (r.isMultiYield) return `Multi-Yield ${r.multiLayout}`;
+  if (r.multiYield) {
+    const dir = r.splitDirection === "height" ? "2x1" : "1x2";
+    return r.stockFilters.length > 1 ? "Multi-Yield " + dir + " (" + r.stockFilters.length + "-stock butt)" : "Multi-Yield " + dir;
+  }
   if (r.type === "single") return "Single Cut";
-  if (r.layout === "grid") return `${r.gridRows}x${r.gridCols} Grid`;
-  return `${r.stockFilters.length}-Filter Butt`;
+  if (r.layout === "grid") return r.gridRows + "x" + r.gridCols + " Grid";
+  return r.stockFilters.length + "-Filter Butt";
 }
 
 function calcStockSummary(cartItems) {
@@ -405,7 +392,7 @@ function calcStockSummary(cartItems) {
     const qty = item.qty || 1;
     const r = item.selectedResult;
     const yieldsPerStock = r.yieldsPerStock || 1;
-    const stockNeeded = r.isMultiYield ? Math.ceil(qty / yieldsPerStock) : qty;
+    const stockNeeded = r.multiYield ? Math.ceil(qty / yieldsPerStock) : qty;
     const prod = PRODUCTS.find(p => p.id === item.productId) || PRODUCTS[0];
     for (const sf of r.stockFilters) {
       const nomLabel = sf.rotated ? `${sf.origNomH}x${sf.origNomW}` : `${sf.nomH}x${sf.nomW}`;
@@ -467,7 +454,7 @@ function PrintSheet({ order, cartItems, onClose }) {
             const r = item.selectedResult;
             const prod = PRODUCTS.find(p => p.id === item.productId) || PRODUCTS[0];
             const yieldsPerStock = r.yieldsPerStock || 1;
-            const stockNeeded = r.isMultiYield ? Math.ceil(item.qty / yieldsPerStock) : item.qty;
+            const stockNeeded = r.multiYield ? Math.ceil(item.qty / yieldsPerStock) : item.qty;
             return (
               <div key={item.id} style={{ background:"#fff", color:"#000", fontFamily:"'JetBrains Mono',monospace", width:"100%", minHeight:"min-content", padding:"0.5in", marginBottom:"8px", boxShadow:"0 2px 8px rgba(0,0,0,0.1)" }}>
                 {/* Header */}
@@ -525,12 +512,12 @@ function PrintSheet({ order, cartItems, onClose }) {
                             </div>
                           );
                         })}
-                        {r.isMultiYield && (
+                        {r.multiYield && (
                           <div style={{ background:"#f0f7ff", border:"1px solid #b3d4f7", borderRadius:"3px", padding:"5px 8px", fontSize:"10px", color:"#0066B3", fontWeight:"600", marginTop:"6px" }}>
-                            Multi-Yield: 2 custom filters per stock — {r.multiLayout === "2x1" ? "stacked vertically" : "side by side"}, waste from middle
+                            Multi-Yield: 2 custom filters per stock — {r.splitDirection === "2x1" ? "stacked vertically" : "side by side"}, waste from middle
                           </div>
                         )}
-                        {!r.isMultiYield && r.type !== "single" && (
+                        {!r.multiYield && r.type !== "single" && (
                           <div style={{ background:"#f0f0f0", border:"1px solid #999", borderRadius:"3px", padding:"5px 8px", fontSize:"10px", color:"#111", marginTop:"6px" }}>
                             {r.layout === "grid"
                               ? `${r.gridRows}×${r.gridCols} grid — butt and tape seams, then trim to ${item.customW}" × ${item.customH}"`
@@ -855,7 +842,7 @@ export default function FilterCutDB() {
                       <div className="flex items-center gap-3">
                         {selectedIdx===i && <span className="text-xs font-bold text-[#0066B3] bg-blue-100 px-2.5 py-1 rounded-md">SELECTED</span>}
                         {i===0 && selectedIdx!==i && <span className="text-xs font-bold text-emerald-600 bg-emerald-100 px-2.5 py-1 rounded-md">BEST</span>}
-                        {r.isMultiYield && <span className="text-xs font-bold text-violet-600 bg-violet-100 px-2.5 py-1 rounded-md">MULTI-YIELD</span>}
+                        {r.multiYield && <span className="text-xs font-bold text-violet-600 bg-violet-100 px-2.5 py-1 rounded-md">MULTI-YIELD</span>}
                         <span className="text-sm font-medium text-slate-600">
                           Option {i+1} — {getMethodLabel(r)}
                         </span>
@@ -876,15 +863,15 @@ export default function FilterCutDB() {
                             </div>
                           ))}
                         </div>
-                        {r.isMultiYield && (
+                        {r.multiYield && (
                           <div className="text-xs text-violet-600 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2">
-                            Yields <strong>2</strong> custom filters per stock ({r.multiLayout === "2x1" ? "stacked" : "side-by-side"}) — waste strip from middle
+                            Yields <strong>2</strong> custom filters per stock ({r.splitDirection === "2x1" ? "stacked" : "side-by-side"}) — waste strip from middle
                           </div>
                         )}
                         <div className="flex gap-6">
                           <div><div className="text-xs font-semibold text-slate-400 uppercase mb-1">Trim</div><div className="font-mono text-sm text-slate-600">{r.trimH>0?`${r.trimH}" H`:""}{r.trimH>0&&r.trimW>0?" / ":""}{r.trimW>0?`${r.trimW}" W`:""}{!r.trimH&&!r.trimW?"None":""}</div></div>
                           <div><div className="text-xs font-semibold text-slate-400 uppercase mb-1">Cuts</div><div className="font-mono text-sm text-slate-600">{r.cuts}</div></div>
-                          {r.isMultiYield && <div><div className="text-xs font-semibold text-slate-400 uppercase mb-1">Stock Needed</div><div className="font-mono text-sm text-[#0066B3] font-bold">{Math.ceil(qty/2)} for {qty} pcs</div></div>}
+                          {r.multiYield && <div><div className="text-xs font-semibold text-slate-400 uppercase mb-1">Stock Needed</div><div className="font-mono text-sm text-[#0066B3] font-bold">{Math.ceil(qty/2)} for {qty} pcs</div></div>}
                         </div>
                       </div>
                       <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
@@ -934,7 +921,7 @@ export default function FilterCutDB() {
                   const prod = PRODUCTS.find(p=>p.id===item.productId)||PRODUCTS[0];
                   const r = item.selectedResult;
                   const yieldsPerStock = r.yieldsPerStock || 1;
-                  const stockNeeded = r.isMultiYield ? Math.ceil(item.qty / yieldsPerStock) : item.qty;
+                  const stockNeeded = r.multiYield ? Math.ceil(item.qty / yieldsPerStock) : item.qty;
                   return (
                     <div key={item.id} className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
                       <div className="px-5 py-3.5 bg-slate-50 flex items-center justify-between border-b border-slate-100">
@@ -942,7 +929,7 @@ export default function FilterCutDB() {
                           <span className="text-xs font-bold text-slate-400 bg-slate-200 px-2.5 py-1 rounded-md">LINE {idx+1}</span>
                           <span className="text-sm font-mono font-semibold text-slate-700">{item.customH}" × {item.customW}" × {r.depth}"</span>
                           <span className="text-xs text-[#0066B3] bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md font-medium">{prod.short}</span>
-                          {r.isMultiYield && <span className="text-xs text-violet-600 bg-violet-50 px-2 py-0.5 rounded-md font-medium">Multi-Yield</span>}
+                          {r.multiYield && <span className="text-xs text-violet-600 bg-violet-50 px-2 py-0.5 rounded-md font-medium">Multi-Yield</span>}
                           <span className="text-xs text-slate-400">{getMethodLabel(r)}</span>
                         </div>
                         <div className="flex items-center gap-4">
@@ -972,9 +959,9 @@ export default function FilterCutDB() {
                             <div><span className="text-slate-400">Trim: </span><span className="font-mono text-slate-600">{r.trimH>0?`${r.trimH}" H`:""}{r.trimH>0&&r.trimW>0?" / ":""}{r.trimW>0?`${r.trimW}" W`:""}{!r.trimH&&!r.trimW?"None":""}</span></div>
                             <div><span className="text-slate-400">Cuts: </span><span className="font-mono text-slate-600">{r.cuts}</span></div>
                           </div>
-                          {r.isMultiYield && (
+                          {r.multiYield && (
                             <div className="text-xs text-violet-600 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2 inline-block">
-                              Multi-yield: {r.multiLayout === "2x1" ? "stacked" : "side-by-side"} — {yieldsPerStock} per stock → pull {stockNeeded} for {item.qty} pcs
+                              Multi-yield: {r.splitDirection === "2x1" ? "stacked" : "side-by-side"} — {yieldsPerStock} per stock → pull {stockNeeded} for {item.qty} pcs
                             </div>
                           )}
                         </div>
@@ -1040,7 +1027,7 @@ export default function FilterCutDB() {
                         const r = item.selectedResult;
                         if (!r) return null;
                         const yieldsPerStock = r.yieldsPerStock || 1;
-                        const stockNeeded = r.isMultiYield ? Math.ceil(item.qty / yieldsPerStock) : item.qty;
+                        const stockNeeded = r.multiYield ? Math.ceil(item.qty / yieldsPerStock) : item.qty;
                         return (
                           <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50/50">
                             <td className="px-5 py-4 text-slate-400">{idx+1}</td>
