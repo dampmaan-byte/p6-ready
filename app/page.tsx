@@ -46,14 +46,6 @@ const cutMethodLabel = (r) => {
   return `${r.stockFilters.length}-Filter Butt`;
 };
 
-const stockPullLabel = (r, qty) => {
-  const yieldsPerStock = r.yieldsPerStock || 1;
-  const sets = Math.ceil(qty / yieldsPerStock);
-  const totalStock = sets * r.stockFilters.length;
-  if (yieldsPerStock > 1) return `pull ${totalStock} → makes ${sets * yieldsPerStock}`;
-  return `${totalStock} stock`;
-};
-
 // ─── CUTTING ENGINE ───────────────────────────────────────────────────────────
 function getStockOrientations(stocks) {
   const orientations = [];
@@ -114,8 +106,8 @@ function findBestCut(customH, customW, depth, qty) {
   const uniqueHeights = [...new Set(allOrientations.map(f => +f.actH.toFixed(2)))].sort((a,b)=>a-b);
   const uniqueWidths  = [...new Set(allOrientations.map(f => +f.actW.toFixed(2)))].sort((a,b)=>a-b);
   const filterMap = new Map();
-  for (const f of allOrientations) filterMap.set(f.actH.toFixed(2)+'|'+f.actW.toFixed(2), f);
-  const findFilter = (h, w) => filterMap.get(h.toFixed(2)+'|'+w.toFixed(2));
+  for (const f of allOrientations) filterMap.set(f.actH.toFixed(2)+"|"+f.actW.toFixed(2), f);
+  const findFilter = (h, w) => filterMap.get(h.toFixed(2)+"|"+w.toFixed(2));
 
   const addGridResult = (rowHeights, colWidths) => {
     const nRows=rowHeights.length, nCols=colWidths.length;
@@ -131,105 +123,63 @@ function findBestCut(customH, customW, depth, qty) {
   };
 
   const combos = (arr, n) => {
-    if (n===1) return arr.map(x=>[x]);
-    if (n===2) return arr.flatMap((x,i)=>arr.slice(i).map(y=>[x,y]));
-    if (n===3) return arr.flatMap((x,i)=>arr.slice(i).flatMap((y,j)=>arr.slice(i+j).map(z=>[x,y,z])));
-    if (n===4) return arr.flatMap((x,i)=>arr.slice(i).flatMap((y,j)=>arr.slice(i+j).flatMap((z,k)=>arr.slice(i+j+k).map(w=>[x,y,z,w]))));
+    if(n===1)return arr.map(x=>[x]);if(n===2)return arr.flatMap((x,i)=>arr.slice(i).map(y=>[x,y]));
+    if(n===3)return arr.flatMap((x,i)=>arr.slice(i).flatMap((y,j)=>arr.slice(i+j).map(z=>[x,y,z])));
+    if(n===4)return arr.flatMap((x,i)=>arr.slice(i).flatMap((y,j)=>arr.slice(i+j).flatMap((z,k)=>arr.slice(i+j+k).map(w=>[x,y,z,w]))));
     return [];
   };
   const smallGridConfigs=[[2,2],[2,3],[3,2],[3,3],[2,4],[4,2]];
-  for (const [nRows,nCols] of smallGridConfigs) {
-    const hCombos=combos(uniqueHeights,nRows), wCombos=combos(uniqueWidths,nCols);
-    for (const rh of hCombos) { const totalH=rh.reduce((a,b)=>a+b,0); if(totalH<needH) continue; for (const cw of wCombos) { const totalW=cw.reduce((a,b)=>a+b,0); if(totalW<needW) continue; addGridResult(rh,cw); } }
-  }
+  for(const[nR,nC]of smallGridConfigs){const hC=combos(uniqueHeights,nR),wC=combos(uniqueWidths,nC);
+    for(const rh of hC){const tH=rh.reduce((a,b)=>a+b,0);if(tH<needH)continue;for(const cw of wC){const tW=cw.reduce((a,b)=>a+b,0);if(tW<needW)continue;addGridResult(rh,cw);}}}
   const largeGridConfigs=[[3,4],[4,3],[4,4]];
-  for (const [nRows,nCols] of largeGridConfigs) {
-    for (const h of uniqueHeights) { const totalH=h*nRows; if(totalH<needH) continue;
-      for (const w of uniqueWidths) { const totalW=w*nCols; if(totalW<needW) continue;
-        addGridResult(Array(nRows).fill(h), Array(nCols).fill(w)); } }
+  for(const[nR,nC]of largeGridConfigs){for(const h of uniqueHeights){const tH=h*nR;if(tH<needH)continue;
+    for(const w of uniqueWidths){const tW=w*nC;if(tW<needW)continue;addGridResult(Array(nR).fill(h),Array(nC).fill(w));}}}
+
+  // ─── MULTI-YIELD: 2 custom filters from 1 stock arrangement (qty > 1) ───
+  if((qty||1)>1){
+    const addMY=(fc,cH,cW,ej)=>{
+      const mf=f=>({nomH:f.nomH,nomW:f.nomW,actH:f.actH,actW:f.actW,rotated:f.rotated,origNomH:f.origNomH,origNomW:f.origNomW});
+      const j=ej!=null?ej:fc.length-1;
+      if(cH>=needH*2){const mid=+(cH-needH*2).toFixed(4),tw=+(cW-needW).toFixed(4);
+        if(cW>=needW&&isSafeCut(mid)&&isSafeCut(tw)){const wa=+((cH*cW)-(needH*needW*2)).toFixed(4);
+          results.push({type:"multi-2x1",multiYield:true,yieldsPerStock:2,splitDirection:"height",layout:fc.length>1?"linear":undefined,stockFilters:fc.map(mf),trimH:mid,trimW:tw,combinedW:cW,combinedH:cH,wasteArea:wa,cuts:1+j+(mid>0?1:0)+(tw>0?1:0),customActH:needH,customActW:needW,depth});}}
+      if(cH>=needH&&cW>=needW*2){const th=+(cH-needH).toFixed(4),mid=+(cW-needW*2).toFixed(4);
+        if(isSafeCut(th)&&isSafeCut(mid)){const wa=+((cH*cW)-(needH*needW*2)).toFixed(4);
+          results.push({type:"multi-1x2",multiYield:true,yieldsPerStock:2,splitDirection:"width",layout:fc.length>1?"linear":undefined,stockFilters:fc.map(mf),trimH:th,trimW:mid,combinedW:cW,combinedH:cH,wasteArea:wa,cuts:1+j+(th>0?1:0)+(mid>0?1:0),customActH:needH,customActW:needW,depth});}}
+    };
+    for(const f of allOrientations)addMY([f],f.actH,f.actW);
+    for(const[hKey,filters]of Object.entries(byActH)){const actH=parseFloat(hKey);
+      const tc=combo=>addMY(combo,actH,combo.reduce((s,f)=>s+f.actW,0));
+      for(let i=0;i<filters.length;i++)for(let j=i;j<filters.length;j++)tc([filters[i],filters[j]]);
+      for(let i=0;i<filters.length;i++)for(let j=i;j<filters.length;j++)for(let k=j;k<filters.length;k++)tc([filters[i],filters[j],filters[k]]);
+      for(let i=0;i<filters.length;i++)for(let j=i;j<filters.length;j++)for(let k=j;k<filters.length;k++)for(let l=k;l<filters.length;l++)tc([filters[i],filters[j],filters[k],filters[l]]);}
+    const addGMY=(rh,cw)=>{const nR=rh.length,nC=cw.length,cH=rh.reduce((a,b)=>a+b,0),cW=cw.reduce((a,b)=>a+b,0);
+      const gf=[];for(let r=0;r<nR;r++)for(let cc=0;cc<nC;cc++){const f=findFilter(rh[r],cw[cc]);if(!f)return;gf.push(f);}
+      addMY(gf,cH,cW,(nR-1)+(nC-1));};
+    for(const[nR,nC]of smallGridConfigs){const hC=combos(uniqueHeights,nR),wC=combos(uniqueWidths,nC);
+      for(const rh of hC){const tH=rh.reduce((a,b)=>a+b,0);if(tH<needH*2&&tH<needH)continue;
+        for(const cw of wC){const tW=cw.reduce((a,b)=>a+b,0);if(tW<needW*2&&tW<needW)continue;addGMY(rh,cw);}}}
+    for(const[nR,nC]of largeGridConfigs){for(const h of uniqueHeights){const tH=h*nR;if(tH<needH*2&&tH<needH)continue;
+      for(const w of uniqueWidths){const tW=w*nC;if(tW<needW*2&&tW<needW)continue;addGMY(Array(nR).fill(h),Array(nC).fill(w));}}}
   }
 
-  // ─── MULTI-YIELD: 2 custom filters from 1 stock arrangement ───
-  if ((qty || 1) > 1) {
-    const addMultiYield = (filterCombo, combinedH, combinedW, extraJoints) => {
-      const mapF = f => ({ nomH:f.nomH, nomW:f.nomW, actH:f.actH, actW:f.actW, rotated:f.rotated, origNomH:f.origNomH, origNomW:f.origNomW });
-      const joints = extraJoints != null ? extraJoints : filterCombo.length - 1;
-      if (combinedH >= needH * 2) {
-        const midWaste = +(combinedH - needH * 2).toFixed(4);
-        const trimW = +(combinedW - needW).toFixed(4);
-        if (combinedW >= needW && isSafeCut(midWaste) && isSafeCut(trimW)) {
-          const wasteArea = +((combinedH * combinedW) - (needH * needW * 2)).toFixed(4);
-          const cuts = 1 + joints + (midWaste > 0 ? 1 : 0) + (trimW > 0 ? 1 : 0);
-          results.push({ type:"multi-2x1", multiYield:true, yieldsPerStock:2, splitDirection:"height",
-            layout: filterCombo.length > 1 ? "linear" : undefined,
-            stockFilters: filterCombo.map(mapF), trimH:midWaste, trimW, combinedW, combinedH,
-            wasteArea, cuts, customActH:needH, customActW:needW, depth });
-        }
-      }
-      if (combinedH >= needH && combinedW >= needW * 2) {
-        const trimH = +(combinedH - needH).toFixed(4);
-        const midWaste = +(combinedW - needW * 2).toFixed(4);
-        if (isSafeCut(trimH) && isSafeCut(midWaste)) {
-          const wasteArea = +((combinedH * combinedW) - (needH * needW * 2)).toFixed(4);
-          const cuts = 1 + joints + (trimH > 0 ? 1 : 0) + (midWaste > 0 ? 1 : 0);
-          results.push({ type:"multi-1x2", multiYield:true, yieldsPerStock:2, splitDirection:"width",
-            layout: filterCombo.length > 1 ? "linear" : undefined,
-            stockFilters: filterCombo.map(mapF), trimH, trimW:midWaste, combinedW, combinedH,
-            wasteArea, cuts, customActH:needH, customActW:needW, depth });
-        }
-      }
-    };
-    for (const f of allOrientations) addMultiYield([f], f.actH, f.actW);
-    for (const [hKey, filters] of Object.entries(byActH)) {
-      const actH = parseFloat(hKey);
-      const tryCombo = (combo) => addMultiYield(combo, actH, combo.reduce((s,f)=>s+f.actW,0));
-      for (let i=0;i<filters.length;i++) for (let j=i;j<filters.length;j++) tryCombo([filters[i],filters[j]]);
-      for (let i=0;i<filters.length;i++) for (let j=i;j<filters.length;j++) for (let k=j;k<filters.length;k++) tryCombo([filters[i],filters[j],filters[k]]);
-      for (let i=0;i<filters.length;i++) for (let j=i;j<filters.length;j++) for (let k=j;k<filters.length;k++) for (let l=k;l<filters.length;l++) tryCombo([filters[i],filters[j],filters[k],filters[l]]);
-    }
-    const addGridMultiYield = (rowHeights, colWidths) => {
-      const nRows=rowHeights.length, nCols=colWidths.length;
-      const combinedH=rowHeights.reduce((a,b)=>a+b,0), combinedW=colWidths.reduce((a,b)=>a+b,0);
-      const gridFilters=[];
-      for (let r=0;r<nRows;r++) for (let c=0;c<nCols;c++) { const f=findFilter(rowHeights[r],colWidths[c]); if(!f) return; gridFilters.push(f); }
-      const gridJoints = (nRows-1)+(nCols-1);
-      addMultiYield(gridFilters, combinedH, combinedW, gridJoints);
-    };
-    for (const [nRows,nCols] of smallGridConfigs) {
-      const hCombos=combos(uniqueHeights,nRows), wCombos=combos(uniqueWidths,nCols);
-      for (const rh of hCombos) { const totalH=rh.reduce((a,b)=>a+b,0); if(totalH<needH*2&&totalH<needH) continue;
-        for (const cw of wCombos) { const totalW=cw.reduce((a,b)=>a+b,0); if(totalW<needW*2&&totalW<needW) continue;
-          addGridMultiYield(rh,cw); } }
-    }
-    for (const [nRows,nCols] of largeGridConfigs) {
-      for (const h of uniqueHeights) { const totalH=h*nRows; if(totalH<needH*2&&totalH<needH) continue;
-        for (const w of uniqueWidths) { const totalW=w*nCols; if(totalW<needW*2&&totalW<needW) continue;
-          addGridMultiYield(Array(nRows).fill(h),Array(nCols).fill(w)); } }
-    }
-  }
-
-  // PRIMARY GOAL: Use the fewest filters possible (1 filter is always best)
-  // Secondary: Among same filter count, prefer less waste area
-  // Tertiary: Among same waste, prefer preferred stock sizes
-  // Quaternary: Fewer cuts is better
+  // Sort: multi-yield first, then fewest filters, least waste, preferred stock, fewer cuts
   const prefScore = (r) => {
     const allPref = r.stockFilters.every(f => isPreferred(f.nomH, f.nomW));
     const somePref = r.stockFilters.some(f => isPreferred(f.nomH, f.nomW));
+    if (r.multiYield && allPref) return -2;
+    if (r.multiYield) return -1;
     if (allPref) return 0;
     if (somePref) return 1;
     return 2;
   };
   results.sort((a, b) => 
-    // 1. Fewest filters first (most important)
-    a.stockFilters.length - b.stockFilters.length ||
-    // 2. Less waste area
-    a.wasteArea - b.wasteArea ||
-    // 3. Preferred stock sizes
     prefScore(a) - prefScore(b) ||
-    // 4. Fewer cuts
+    a.stockFilters.length - b.stockFilters.length ||
+    a.wasteArea - b.wasteArea ||
     a.cuts - b.cuts
   );
-  return results.length>0?results.slice(0,8):null;
+  return results.length>0?results.slice(0,12):null;
 }
 
 // ─── SVG CUT DIAGRAM ─────────────────────────────────────────────────────────
@@ -329,57 +279,47 @@ function CutDiagram({ result, compact = false, printMode = false }) {
     const rw = totalStockW * scale, rh = totalStockH * scale;
     const ox = (svgW - rw) / 2, oy = (svgH - rh) / 2;
     const cw = result.customActW * scale, ch = result.customActH * scale;
+    const scaledWidths = filters.map(f => f.actW * scale);
+    const xPositions = []; let lx = ox; for (const sw of scaledWidths) { xPositions.push(lx); lx += sw; }
     if (result.splitDirection === "height") {
       const midW = result.trimH * scale;
-      const keep1Y = oy, wasteY = oy + ch, keep2Y = oy + ch + midW;
-      const scaledWidths = filters.map(f => f.actW * scale);
-      const xPositions = []; let lx = ox; for (const sw of scaledWidths) { xPositions.push(lx); lx += sw; }
       return (
         <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full" style={{ maxHeight: svgH, background: svgBg }}>
           {filters.map((f,i)=><rect key={i} x={xPositions[i]} y={oy} width={scaledWidths[i]} height={rh} fill={stockFill} stroke={filterColors[i%filterColors.length]} strokeWidth={1.5} rx={2} strokeDasharray={i>0?"6 3":"none"}/>)}
-          <rect x={ox} y={keep1Y} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
-          <text x={ox+cw/2} y={keep1Y+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 1</text>
-          {midW > 0 && <rect x={ox} y={wasteY} width={rw} height={midW} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
-          {midW > 0 && <text x={ox+rw/2} y={wasteY+midW/2} textAnchor="middle" fill={wasteTextFill} fontSize={7} fontFamily="monospace" dominantBaseline="middle">{result.trimH}" waste</text>}
-          <rect x={ox} y={keep2Y} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
-          <text x={ox+cw/2} y={keep2Y+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 2</text>
-          {result.trimW > 0 && <rect x={ox+cw} y={oy} width={rw-cw} height={rh} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
-          {xPositions.slice(1).map((xp,i)=><g key={i}><line x1={xp} y1={oy} x2={xp} y2={oy+rh} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/></g>)}
-          <line x1={ox} y1={oy-10} x2={ox+cw} y2={oy-10} stroke={dimStroke} strokeWidth={1}/>
-          <text x={ox+cw/2} y={oy-15} textAnchor="middle" fill={dimFill} fontSize={fontSize} fontFamily="monospace">{result.customActW}"</text>
-          {filters.length > 1 && <><line x1={ox} y1={oy-24} x2={ox+rw} y2={oy-24} stroke={stkDimStroke} strokeWidth={1}/><text x={ox+rw/2} y={oy-29} textAnchor="middle" fill={stkDimFill} fontSize={fontSize-1} fontFamily="monospace">{totalStockW.toFixed(2)}" combined</text></>}
-          <line x1={ox-10} y1={keep1Y} x2={ox-10} y2={keep1Y+ch} stroke={dimStroke} strokeWidth={1}/>
-          <text x={ox-14} y={keep1Y+ch/2} textAnchor="end" fill={dimFill} fontSize={fontSize} fontFamily="monospace" dominantBaseline="middle">{result.customActH}"</text>
-          <line x1={ox+rw+10} y1={oy} x2={ox+rw+10} y2={oy+rh} stroke={stkDimStroke} strokeWidth={1}/>
-          <text x={ox+rw+14} y={oy+rh/2} textAnchor="start" fill={stkDimFill} fontSize={fontSize-1} fontFamily="monospace" dominantBaseline="middle">{totalStockH}" stk</text>
-          {filters.map((f,i)=><text key={i} x={xPositions[i]+scaledWidths[i]/2} y={oy+rh+24} textAnchor="middle" fill={labelColors[i%labelColors.length]} fontSize={Math.min(9,100/filters.length)} fontFamily="monospace">{String.fromCharCode(65+i)}: {f.nomH}x{f.nomW}</text>)}
-        </svg>
-      );
-    } else {
-      const midW = result.trimW * scale;
-      const keep1X = ox, wasteX = ox + cw, keep2X = ox + cw + midW;
-      const scaledWidths = filters.map(f => f.actW * scale);
-      const xPositions = []; let lx = ox; for (const sw of scaledWidths) { xPositions.push(lx); lx += sw; }
-      return (
-        <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full" style={{ maxHeight: svgH, background: svgBg }}>
-          {filters.map((f,i)=><rect key={i} x={xPositions[i]} y={oy} width={scaledWidths[i]} height={rh} fill={stockFill} stroke={filterColors[i%filterColors.length]} strokeWidth={1.5} rx={2} strokeDasharray={i>0?"6 3":"none"}/>)}
-          <rect x={keep1X} y={oy} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
-          <text x={keep1X+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 1</text>
-          {midW > 0 && <rect x={wasteX} y={oy} width={midW} height={rh} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
-          <rect x={keep2X} y={oy} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
-          <text x={keep2X+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 2</text>
-          {result.trimH > 0 && <rect x={ox} y={oy+ch} width={rw} height={rh-ch} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
-          {xPositions.slice(1).map((xp,i)=><g key={i}><line x1={xp} y1={oy} x2={xp} y2={oy+rh} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/></g>)}
+          <rect x={ox} y={oy} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
+          <text x={ox+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 1</text>
+          {midW>0&&<rect x={ox} y={oy+ch} width={rw} height={midW} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
+          {midW>0&&<text x={ox+rw/2} y={oy+ch+midW/2} textAnchor="middle" fill={wasteTextFill} fontSize={7} fontFamily="monospace" dominantBaseline="middle">{result.trimH}" waste</text>}
+          <rect x={ox} y={oy+ch+midW} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
+          <text x={ox+cw/2} y={oy+ch+midW+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 2</text>
+          {result.trimW>0&&<rect x={ox+cw} y={oy} width={rw-cw} height={rh} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
+          {xPositions.slice(1).map((xp,i)=><line key={i} x1={xp} y1={oy} x2={xp} y2={oy+rh} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/>)}
           <line x1={ox} y1={oy-10} x2={ox+cw} y2={oy-10} stroke={dimStroke} strokeWidth={1}/>
           <text x={ox+cw/2} y={oy-15} textAnchor="middle" fill={dimFill} fontSize={fontSize} fontFamily="monospace">{result.customActW}"</text>
           <line x1={ox-10} y1={oy} x2={ox-10} y2={oy+ch} stroke={dimStroke} strokeWidth={1}/>
           <text x={ox-14} y={oy+ch/2} textAnchor="end" fill={dimFill} fontSize={fontSize} fontFamily="monospace" dominantBaseline="middle">{result.customActH}"</text>
-          {filters.length > 1 && <><line x1={ox} y1={oy-24} x2={ox+rw} y2={oy-24} stroke={stkDimStroke} strokeWidth={1}/><text x={ox+rw/2} y={oy-29} textAnchor="middle" fill={stkDimFill} fontSize={fontSize-1} fontFamily="monospace">{totalStockW.toFixed(2)}" combined</text></>}
-          <line x1={ox+rw+10} y1={oy} x2={ox+rw+10} y2={oy+rh} stroke={stkDimStroke} strokeWidth={1}/>
-          <text x={ox+rw+14} y={oy+rh/2} textAnchor="start" fill={stkDimFill} fontSize={fontSize-1} fontFamily="monospace" dominantBaseline="middle">{totalStockH}" stk</text>
-          {filters.map((f,i)=><text key={i} x={xPositions[i]+scaledWidths[i]/2} y={oy+rh+24} textAnchor="middle" fill={labelColors[i%labelColors.length]} fontSize={Math.min(9,100/filters.length)} fontFamily="monospace">{String.fromCharCode(65+i)}: {f.nomH}x{f.nomW}</text>)}
-        </svg>
-      );
+          {filters.length>1&&<><line x1={ox} y1={oy-24} x2={ox+rw} y2={oy-24} stroke={stkDimStroke} strokeWidth={1}/><text x={ox+rw/2} y={oy-29} textAnchor="middle" fill={stkDimFill} fontSize={fontSize-1} fontFamily="monospace">{totalStockW.toFixed(1)}" combined</text></>}
+          {filters.map((f,i)=><text key={i} x={xPositions[i]+scaledWidths[i]/2} y={oy+rh+14} textAnchor="middle" fill={labelColors[i%labelColors.length]} fontSize={Math.min(8,80/filters.length)} fontFamily="monospace">{String.fromCharCode(65+i)}: {f.nomH}x{f.nomW}</text>)}
+        </svg>);
+    } else {
+      const midW = result.trimW * scale;
+      return (
+        <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full" style={{ maxHeight: svgH, background: svgBg }}>
+          {filters.map((f,i)=><rect key={i} x={xPositions[i]} y={oy} width={scaledWidths[i]} height={rh} fill={stockFill} stroke={filterColors[i%filterColors.length]} strokeWidth={1.5} rx={2} strokeDasharray={i>0?"6 3":"none"}/>)}
+          <rect x={ox} y={oy} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
+          <text x={ox+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 1</text>
+          {midW>0&&<rect x={ox+cw} y={oy} width={midW} height={rh} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
+          <rect x={ox+cw+midW} y={oy} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
+          <text x={ox+cw+midW+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 2</text>
+          {result.trimH>0&&<rect x={ox} y={oy+ch} width={rw} height={rh-ch} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
+          {xPositions.slice(1).map((xp,i)=><line key={i} x1={xp} y1={oy} x2={xp} y2={oy+rh} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/>)}
+          <line x1={ox} y1={oy-10} x2={ox+cw} y2={oy-10} stroke={dimStroke} strokeWidth={1}/>
+          <text x={ox+cw/2} y={oy-15} textAnchor="middle" fill={dimFill} fontSize={fontSize} fontFamily="monospace">{result.customActW}"</text>
+          <line x1={ox-10} y1={oy} x2={ox-10} y2={oy+ch} stroke={dimStroke} strokeWidth={1}/>
+          <text x={ox-14} y={oy+ch/2} textAnchor="end" fill={dimFill} fontSize={fontSize} fontFamily="monospace" dominantBaseline="middle">{result.customActH}"</text>
+          {filters.length>1&&<><line x1={ox} y1={oy-24} x2={ox+rw} y2={oy-24} stroke={stkDimStroke} strokeWidth={1}/><text x={ox+rw/2} y={oy-29} textAnchor="middle" fill={stkDimFill} fontSize={fontSize-1} fontFamily="monospace">{totalStockW.toFixed(1)}" combined</text></>}
+          {filters.map((f,i)=><text key={i} x={xPositions[i]+scaledWidths[i]/2} y={oy+rh+14} textAnchor="middle" fill={labelColors[i%labelColors.length]} fontSize={Math.min(8,80/filters.length)} fontFamily="monospace">{String.fromCharCode(65+i)}: {f.nomH}x{f.nomW}</text>)}
+        </svg>);
     }
   }
 
@@ -623,7 +563,7 @@ function PrintSheet({ order, cartItems, onClose }) {
                         <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc" }}>{r.depth}"</td>
                         <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc", fontWeight:"700" }}>{item.qty}</td>
                         <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc" }}>
-                          {cutMethodLabel(r)}
+                          {r.type==="single"?"Single Cut":r.layout==="grid"?`${r.gridRows}×${r.gridCols} Grid`:`${r.stockFilters.length}-Filter Butt`}
                         </td>
                       </tr>
                     );
@@ -750,7 +690,7 @@ export default function FilterCutDB() {
       <div className="border-b border-slate-200 bg-white sticky top-0 z-10 shadow-sm">
         <div className="max-w-6xl mx-auto px-8 py-5 flex items-center justify-between">
           <div className="flex items-center gap-5">
-            <img src="/logo.jpg" alt="General Aire Systems" className="h-14 w-auto" />
+            <img src="/logo.jpg" alt="General Aire Systems" className="h-8 w-auto" />
             <div className="border-l border-slate-200 pl-5">
               <h1 className="text-2xl font-bold text-[#0066B3] tracking-tight">Filter Cut Database</h1>
               <p className="text-sm text-slate-500 mt-0.5">Custom filter manufacturing optimization</p>
