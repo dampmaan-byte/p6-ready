@@ -167,27 +167,24 @@ function findBestCut(customH, customW, depth, qty = 1) {
   }
 
   // ── SORT (tier-based) ──────────────────────────────────────────────────
+  // Tier 0: Single cut (1 stock → 1 custom) — always first pick
+  // Tier 1: Efficient multi-yield (1 stock → 2 customs) — halves pull count
+  // Tier 2: Everything else (butt joints, grids, multi-yield from butted stocks)
+  // Within each tier: least waste → preferred stock → fewest stocks → fewest cuts
   const tierScore = (r) => {
-    const allPref = r.stockFilters.every(f => isPreferred(f.nomH, f.nomW));
-    const somePref = r.stockFilters.some(f => isPreferred(f.nomH, f.nomW));
-    const allSame = r.stockFilters.every(f => f.nomH===r.stockFilters[0].nomH && f.nomW===r.stockFilters[0].nomW);
-    if (r.multiYield && allPref && allSame) return -3;
-    if (r.multiYield && allPref) return -2;
-    if (r.multiYield) return -1;
-    if (allPref && allSame && r.stockFilters.length > 1) return 0;
-    if (r.type === "single" && allPref) return 1;
-    if (allPref) return 2;
-    if (r.type === "single") return 3;
-    if (somePref) return 4;
-    return 5;
+    if (r.type === "single") return 0;
+    if (r.multiYield && r.stockFilters.length === 1) return 1;
+    return 2;
   };
+  const prefScore = (r) => r.stockFilters.every(f => isPreferred(f.nomH, f.nomW)) ? 0 : 1;
   results.sort((a, b) =>
     tierScore(a) - tierScore(b) ||
-    a.stockFilters.length - b.stockFilters.length ||
     a.wasteArea - b.wasteArea ||
+    prefScore(a) - prefScore(b) ||
+    a.stockFilters.length - b.stockFilters.length ||
     a.cuts - b.cuts
   );
-  return results.length > 0 ? results.slice(0, 12) : null;
+  return results.length > 0 ? results.slice(0, 5) : null;
 }
 
 // ─── SVG CUT DIAGRAM ─────────────────────────────────────────────────────────
