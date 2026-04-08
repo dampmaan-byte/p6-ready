@@ -170,7 +170,7 @@ function findBestCut(customH, customW, depth, qty = 1) {
   // Tier 0: Single cut (1 stock → 1 custom) — always first pick
   // Tier 1: Efficient multi-yield (1 stock → 2 customs) — halves pull count
   // Tier 2: Everything else (butt joints, grids, multi-yield from butted stocks)
-  // Within each tier: least waste → preferred stock → fewest stocks → fewest cuts
+  // Within each tier: preferred stock first → least waste → fewest stocks → fewest cuts
   const tierScore = (r) => {
     if (r.type === "single") return 0;
     if (r.multiYield && r.stockFilters.length === 1) return 1;
@@ -179,8 +179,8 @@ function findBestCut(customH, customW, depth, qty = 1) {
   const prefScore = (r) => r.stockFilters.every(f => isPreferred(f.nomH, f.nomW)) ? 0 : 1;
   results.sort((a, b) =>
     tierScore(a) - tierScore(b) ||
-    a.wasteArea - b.wasteArea ||
     prefScore(a) - prefScore(b) ||
+    a.wasteArea - b.wasteArea ||
     a.stockFilters.length - b.stockFilters.length ||
     a.cuts - b.cuts
   );
