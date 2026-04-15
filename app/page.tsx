@@ -174,10 +174,10 @@ function findBestCut(customH, customW, depth, qty = 1) {
     if (r.multiYield && allPref && allSame) return -3;
     if (r.multiYield && allPref) return -2;
     if (r.multiYield) return -1;
-    if (allPref && allSame && r.stockFilters.length > 1) return 0;
-    if (r.type === "single" && allPref) return 1;
-    if (allPref) return 2;
-    if (r.type === "single") return 3;
+    if (r.type === "single" && allPref) return 0;
+    if (r.type === "single") return 1;
+    if (allPref && allSame && r.stockFilters.length > 1) return 2;
+    if (allPref) return 3;
     if (somePref) return 4;
     return 5;
   };
@@ -239,13 +239,12 @@ function CutDiagram({ result, compact = false, printMode = false }) {
       <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full" style={{ maxHeight: svgH, background: svgBg }}>
         {filters.map((f,i) => <rect key={i} x={xPositions[i]} y={oy} width={scaledWidths[i]} height={rh} fill={stockFill} stroke={filterColors[i%filterColors.length]} strokeWidth={1.5} rx={2} strokeDasharray={i>0?"6 3":"none"}/>)}
         <rect x={ox} y={oy} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
-        <text x={ox+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">Filter 1</text>
+        <text x={ox+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 1</text>
         {midH > 0 && <rect x={ox} y={oy+ch} width={rw} height={midH} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
-        {midH > 0 && <text x={ox+rw/2} y={oy+ch+midH/2} textAnchor="middle" fill={wasteTextFill} fontSize={8} fontFamily="monospace" dominantBaseline="middle">waste</text>}
+        {midH > 0 && <text x={ox+rw/2} y={oy+ch+midH/2} textAnchor="middle" fill={wasteTextFill} fontSize={8} fontFamily="monospace" dominantBaseline="middle">{result.trimH}" mid cap</text>}
         <rect x={ox} y={oy+ch+midH} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
-        <text x={ox+cw/2} y={oy+ch+midH+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">Filter 2</text>
+        <text x={ox+cw/2} y={oy+ch+midH+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 2</text>
         {result.trimW > 0 && <rect x={ox+cw} y={oy} width={rw-cw} height={rh} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
-        {result.trimW > 0 && <text x={ox+cw+(rw-cw)/2} y={oy+rh/2} textAnchor="middle" fill={wasteTextFill} fontSize={8} fontFamily="monospace" dominantBaseline="middle">waste</text>}
         {xPositions.slice(1).map((xp,i) => <line key={i} x1={xp} y1={oy} x2={xp} y2={oy+rh} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/>)}
         <line x1={ox} y1={oy-10} x2={ox+cw} y2={oy-10} stroke={dimStroke} strokeWidth={1}/>
         <text x={ox+cw/2} y={oy-15} textAnchor="middle" fill={dimFill} fontSize={fontSize} fontFamily="monospace">{result.customActW}"</text>
@@ -273,13 +272,12 @@ function CutDiagram({ result, compact = false, printMode = false }) {
       <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full" style={{ maxHeight: svgH, background: svgBg }}>
         {filters.map((f,i) => <rect key={i} x={xPositions[i]} y={oy} width={scaledWidths[i]} height={rh} fill={stockFill} stroke={filterColors[i%filterColors.length]} strokeWidth={1.5} rx={2} strokeDasharray={i>0?"6 3":"none"}/>)}
         <rect x={ox} y={oy} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
-        <text x={ox+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">Filter 1</text>
+        <text x={ox+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 1</text>
         {midW > 0 && <rect x={ox+cw} y={oy} width={midW} height={rh} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
-        {midW > 0 && <text x={ox+cw+midW/2} y={oy+rh/2} textAnchor="middle" fill={wasteTextFill} fontSize={8} fontFamily="monospace" dominantBaseline="middle" transform={`rotate(-90,${ox+cw+midW/2},${oy+rh/2})`}>waste</text>}
+        {midW > 0 && <text x={ox+cw+midW/2} y={oy+rh/2} textAnchor="middle" fill={wasteTextFill} fontSize={8} fontFamily="monospace" dominantBaseline="middle" transform={`rotate(-90,${ox+cw+midW/2},${oy+rh/2})`}>{result.trimW}" mid cap</text>}
         <rect x={ox+cw+midW} y={oy} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
-        <text x={ox+cw+midW+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">Filter 2</text>
+        <text x={ox+cw+midW+cw/2} y={oy+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?9:11} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP 2</text>
         {result.trimH > 0 && <rect x={ox} y={oy+ch} width={rw} height={rh-ch} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
-        {result.trimH > 0 && <text x={ox+rw/2} y={oy+ch+(rh-ch)/2} textAnchor="middle" fill={wasteTextFill} fontSize={8} fontFamily="monospace" dominantBaseline="middle">waste</text>}
         {xPositions.slice(1).map((xp,i) => <line key={i} x1={xp} y1={oy} x2={xp} y2={oy+rh} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/>)}
         <line x1={ox} y1={oy-10} x2={ox+cw} y2={oy-10} stroke={dimStroke} strokeWidth={1}/>
         <text x={ox+cw/2} y={oy-15} textAnchor="middle" fill={dimFill} fontSize={fontSize} fontFamily="monospace">{result.customActW}"</text>
