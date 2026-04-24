@@ -166,20 +166,31 @@ function findBestCut(customH, customW, depth, qty = 1) {
     }
   }
 
-  // ── SORT (tier-based) ──────────────────────────────────────────────────
+  // ── SORT (tier-based, common-sense ordering) ───────────────────────────
+  // Rule: pull the fewest stocks possible, get as many customs per stock as fit.
+  //   T0/T1  Single-stock multi-yield (1 stock → 2 customs) — preferred, then not
+  //   T2/T3  Single cut (1 stock → 1 custom)                — preferred, then not
+  //   T4-T6  Multi-stock multi-yield (butted stocks → 2 customs)
+  //   T7-T9  Linear butts & grids (multi-stock → 1 custom)
   const tierScore = (r) => {
     const allPref = r.stockFilters.every(f => isPreferred(f.nomH, f.nomW));
-    const somePref = r.stockFilters.some(f => isPreferred(f.nomH, f.nomW));
     const allSame = r.stockFilters.every(f => f.nomH===r.stockFilters[0].nomH && f.nomW===r.stockFilters[0].nomW);
-    if (r.multiYield && allPref && allSame) return -3;
-    if (r.multiYield && allPref) return -2;
-    if (r.multiYield) return -1;
-    if (r.type === "single" && allPref) return 0;
-    if (r.type === "single") return 1;
-    if (allPref && allSame && r.stockFilters.length > 1) return 2;
-    if (allPref) return 3;
-    if (somePref) return 4;
-    return 5;
+    const isSingleStock = r.stockFilters.length === 1;
+    // Single-stock solutions always beat multi-stock
+    if (isSingleStock) {
+      if (r.multiYield) return allPref ? 0 : 1;   // 1 stock → 2 customs
+      return allPref ? 2 : 3;                      // 1 stock → 1 custom
+    }
+    // Multi-stock: multi-yield from butted stocks
+    if (r.multiYield) {
+      if (allPref && allSame) return 4;
+      if (allPref) return 5;
+      return 6;
+    }
+    // Multi-stock: linear butts & grids
+    if (allPref && allSame) return 7;
+    if (allPref) return 8;
+    return 9;
   };
   results.sort((a, b) =>
     tierScore(a) - tierScore(b) ||
