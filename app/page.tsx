@@ -21,11 +21,11 @@ const STOCK = {
 };
 
 const PRODUCTS = [
-  { id: "aeropleat3",  label: "Camfil Aeropleat 3 MV8",  short: "Aeropleat 3" },
-  { id: "3030",        label: "Camfil 30/30 MV8",        short: "30/30"       },
-  { id: "aeropleat13", label: "Camfil Aeropleat 13 MV8", short: "Aeropleat 13"},
-  { id: "mv8",         label: "Mann Hummel MV8",         short: "MV8"         },
-  { id: "dual9",       label: "Camfil Dual MV9/9A",      short: "Dual MV9/9A" },
+  { id: "aeropleat3",  label: "Camfil AP3 (GSP)",       short: "AP3 (GSP)"   },
+  { id: "3030",        label: "Camfil 30/30",           short: "30/30"       },
+  { id: "aeropleat13", label: "Camfil GHP13",           short: "GHP13"       },
+  { id: "mv8",         label: "MH MV8 pleat",           short: "MH MV8"      },
+  { id: "dual9",       label: "Camfil Dual MV9/9A",     short: "Dual MV9/9A" },
 ];
 
 const DEPTH_ACTUAL = { 1: 0.88, 2: 1.75, 4: 3.75 };
@@ -34,6 +34,322 @@ const toActualDepth = (d) => DEPTH_ACTUAL[d];
 
 const PREFERRED = new Set(["16x20","20x20","20x25","16x25","24x24","20x24","12x24","20x30","25x25"]);
 const isPreferred = (nomH, nomW) => PREFERRED.has(`${nomH}x${nomW}`) || PREFERRED.has(`${nomW}x${nomH}`);
+
+// ─── PART NUMBERS (stock filters only) ───────────────────────────────────────
+// Key: productId|normalizedSize|depth  (size normalized small-dimension-first)
+// Only sizes present in STOCK are listed; retired/non-app SKUs are intentionally omitted.
+const PART_NUMBERS = {
+  // ══ Camfil 30/30 ══
+  // ── 1" depth ──
+  "3030|16x20|1": "FP-054862-001",
+  "3030|20x20|1": "FP-054862-002",
+  "3030|20x25|1": "FP-054862-003",
+  "3030|16x25|1": "FP-054862-004",
+  "3030|24x24|1": "FP-054862-005",
+  "3030|14x20|1": "FP-054862-006",
+  "3030|14x25|1": "FP-054862-007",
+  "3030|15x20|1": "FP-054862-008",
+  "3030|12x24|1": "FP-054862-010",
+  "3030|20x24|1": "FP-054862-011",
+  "3030|16x16|1": "FP-054862-012",
+  "3030|15x25|1": "FP-054862-013",
+  "3030|25x25|1": "FP-054862-014",
+  "3030|16x24|1": "FP-054862-015",
+  "3030|10x20|1": "FP-054862-016",
+  "3030|18x25|1": "FP-054862-017",
+  "3030|18x20|1": "FP-054862-020",
+  "3030|22x22|1": "FP-054862-021",
+  "3030|10x24|1": "FP-054862-022",
+  "3030|10x25|1": "FP-054862-023",
+  "3030|12x25|1": "FP-054862-024",
+  "3030|14x24|1": "FP-054862-026",
+  "3030|18x24|1": "FP-054862-028",
+  "3030|20x30|1": "FP-054862-20301",
+  // ── 2" depth ──
+  "3030|16x20|2": "FP-049880-001",
+  "3030|20x20|2": "FP-049880-002",
+  "3030|20x25|2": "FP-049880-003",
+  "3030|16x25|2": "FP-049880-004",
+  "3030|24x24|2": "FP-049880-005",
+  "3030|12x24|2": "FP-049880-006",
+  "3030|12x20|2": "FP-049880-007",
+  "3030|10x20|2": "FP-049880-008",
+  "3030|14x20|2": "FP-049880-009",
+  "3030|14x25|2": "FP-049880-010",
+  "3030|15x20|2": "FP-049880-011",
+  "3030|20x24|2": "FP-049880-012",
+  "3030|18x20|2": "FP-049880-013",
+  "3030|18x25|2": "FP-049880-014",
+  "3030|18x24|2": "FP-049880-015",
+  "3030|16x24|2": "FP-049880-016",
+  "3030|25x25|2": "FP-049880-018",
+  "3030|16x16|2": "FP-049880-019",
+  "3030|15x25|2": "FP-049880-020",
+  "3030|18x18|2": "FP-049880-024",
+  "3030|16x30|2": "FP-049880-027",
+  "3030|20x22|2": "FP-049880-028",
+  "3030|12x25|2": "FP-049880-031",
+  "3030|20x30|2": "FP-049880-2030",
+  // ── 4" depth ──
+  "3030|24x24|4": "FP-059413-001",
+  "3030|12x24|4": "FP-059413-002",
+  "3030|20x20|4": "FP-059413-003",
+  "3030|16x20|4": "FP-059413-004",
+  "3030|16x25|4": "FP-059413-005",
+  "3030|20x25|4": "FP-059413-006",
+  "3030|20x24|4": "FP-059413-008",
+  "3030|18x24|4": "FP-059413-009",
+  "3030|16x24|4": "FP-059413-011",
+  // ══ Camfil Dual MV9/9A ══
+  // ── 1" depth ──
+  "dual9|16x20|1": "FPD9-406330-001",
+  "dual9|20x20|1": "FPD9-406330-002",
+  "dual9|20x25|1": "FPD9-406330-003",
+  "dual9|16x25|1": "FPD9-406330-004",
+  "dual9|24x24|1": "FPD9-406330-005",
+  "dual9|12x24|1": "FPD9-406330-006",
+  "dual9|10x20|1": "FPD9-406330-008",
+  "dual9|14x20|1": "FPD9-406330-009",
+  "dual9|14x25|1": "FPD9-406330-010",
+  "dual9|15x20|1": "FPD9-406330-011",
+  "dual9|20x24|1": "FPD9-406330-012",
+  "dual9|18x20|1": "FPD9-406330-013",
+  "dual9|18x25|1": "FPD9-406330-014",
+  "dual9|18x24|1": "FPD9-406330-015",
+  "dual9|16x24|1": "FPD9-406330-016",
+  "dual9|25x25|1": "FPD9-406330-018",
+  "dual9|20x30|1": "FPD9-406330-026",
+  "dual9|22x22|1": "FPD9-406330-027",
+  // ── 2" depth ──
+  "dual9|16x20|2": "FPD9-406331-001",
+  "dual9|20x20|2": "FPD9-406331-002",
+  "dual9|20x25|2": "FPD9-406331-003",
+  "dual9|16x25|2": "FPD9-406331-004",
+  "dual9|24x24|2": "FPD9-406331-005",
+  "dual9|12x24|2": "FPD9-406331-006",
+  "dual9|12x20|2": "FPD9-406331-007",
+  "dual9|10x20|2": "FPD9-406331-008",
+  "dual9|14x20|2": "FPD9-406331-009",
+  "dual9|14x25|2": "FPD9-406331-010",
+  "dual9|15x20|2": "FPD9-406331-011",
+  "dual9|20x24|2": "FPD9-406331-012",
+  "dual9|18x20|2": "FPD9-406331-013",
+  "dual9|18x25|2": "FPD9-406331-014",
+  "dual9|18x24|2": "FPD9-406331-015",
+  "dual9|16x24|2": "FPD9-406331-016",
+  "dual9|25x25|2": "FPD9-406331-018",
+  "dual9|16x16|2": "FPD9-406331-019",
+  // ── 4" depth ──
+  "dual9|16x20|4": "FPD9-406332-001",
+  "dual9|20x20|4": "FPD9-406332-002",
+  "dual9|20x25|4": "FPD9-406332-003",
+  "dual9|16x25|4": "FPD9-406332-004",
+  "dual9|24x24|4": "FPD9-406332-005",
+  "dual9|12x24|4": "FPD9-406332-006",
+  "dual9|20x24|4": "FPD9-406332-012",
+  "dual9|18x24|4": "FPD9-406332-015",
+  "dual9|16x24|4": "FPD9-406332-016",
+  // ══ Camfil AP3 (GSP) ══
+  // ── 1" depth ──
+  "aeropleat3|16x20|1": "GSP-1620-01",
+  "aeropleat3|20x20|1": "GSP-2020-01",
+  "aeropleat3|20x25|1": "GSP-2025-01",
+  "aeropleat3|16x25|1": "GSP-1625-01",
+  "aeropleat3|24x24|1": "GSP-2424-01",
+  "aeropleat3|14x20|1": "GSP-1420-01",
+  "aeropleat3|20x24|1": "GSP-2024-01",
+  "aeropleat3|15x20|1": "GSP-1520-01",
+  "aeropleat3|12x24|1": "GSP-1224-01",
+  "aeropleat3|16x24|1": "GSP-1624-01",
+  "aeropleat3|14x25|1": "GSP-1425-01",
+  "aeropleat3|10x20|1": "GSP-1020-01",
+  "aeropleat3|25x25|1": "GSP-2525-01",
+  "aeropleat3|18x25|1": "GSP-1825-01",
+  "aeropleat3|16x16|1": "GSP-1616-01",
+  "aeropleat3|18x20|1": "GSP-1820-01",
+  "aeropleat3|22x22|1": "GSP-2222-01",
+  "aeropleat3|10x24|1": "GSP-1024-01",
+  "aeropleat3|10x25|1": "GSP-1025-01",
+  "aeropleat3|12x25|1": "GSP-1225-01",
+  "aeropleat3|15x25|1": "GSP-1525-01",
+  "aeropleat3|14x24|1": "GSP-1424-01",
+  "aeropleat3|18x24|1": "GSP-1824-01",
+  "aeropleat3|20x30|1": "GSP-2030-01",
+  // ── 2" depth ──
+  "aeropleat3|16x20|2": "GSP-1620-02",
+  "aeropleat3|20x20|2": "GSP-2020-02",
+  "aeropleat3|20x25|2": "GSP-2025-02",
+  "aeropleat3|16x25|2": "GSP-1625-02",
+  "aeropleat3|24x24|2": "GSP-2424-02",
+  "aeropleat3|12x24|2": "GSP-1224-02",
+  "aeropleat3|20x24|2": "GSP-2024-02",
+  "aeropleat3|18x24|2": "GSP-1824-02",
+  "aeropleat3|18x25|2": "GSP-1825-02",
+  "aeropleat3|14x20|2": "GSP-1420-02",
+  "aeropleat3|14x25|2": "GSP-1425-02",
+  "aeropleat3|16x24|2": "GSP-1624-02",
+  "aeropleat3|25x25|2": "GSP-2525-02",
+  "aeropleat3|15x20|2": "GSP-1520-02",
+  "aeropleat3|10x20|2": "GSP-1020-02",
+  "aeropleat3|16x16|2": "GSP-1616-02",
+  "aeropleat3|12x20|2": "GSP-1220-02",
+  "aeropleat3|18x20|2": "GSP-1820-02",
+  "aeropleat3|15x25|2": "GSP-1525-02",
+  "aeropleat3|16x30|2": "GSP-1630-02",
+  "aeropleat3|20x22|2": "GSP-2022-02",
+  "aeropleat3|12x25|2": "GSP-1225-02",
+  "aeropleat3|18x18|2": "GSP-1818-02",
+  "aeropleat3|20x30|2": "GSP-2030-02",
+  // ── 4" depth ──
+  "aeropleat3|24x24|4": "GSP-2424-04",
+  "aeropleat3|12x24|4": "GSP-1224-04",
+  "aeropleat3|20x20|4": "GSP-2020-04",
+  "aeropleat3|16x20|4": "GSP-1620-04",
+  "aeropleat3|16x25|4": "GSP-1625-04",
+  "aeropleat3|20x25|4": "GSP-2025-04",
+  "aeropleat3|20x24|4": "GSP-2024-04",
+  "aeropleat3|18x24|4": "GSP-1824-04",
+  "aeropleat3|16x24|4": "GSP-1624-04",
+  // ══ Camfil GHP13 ══
+  // ── 1" depth ──
+  "aeropleat13|16x20|1": "GHP13-1620-01",
+  "aeropleat13|20x20|1": "GHP13-2020-01",
+  "aeropleat13|20x25|1": "GHP13-2025-01",
+  "aeropleat13|16x25|1": "GHP13-1625-01",
+  "aeropleat13|24x24|1": "GHP13-2424-01",
+  "aeropleat13|14x20|1": "GHP13-1420-01",
+  "aeropleat13|20x24|1": "GHP13-2024-01",
+  "aeropleat13|15x20|1": "GHP13-1520-01",
+  "aeropleat13|12x24|1": "GHP13-1224-01",
+  "aeropleat13|16x24|1": "GHP13-1624-01",
+  "aeropleat13|14x25|1": "GHP13-1425-01",
+  "aeropleat13|10x20|1": "GHP13-1020-01",
+  "aeropleat13|25x25|1": "GHP13-2525-01",
+  "aeropleat13|18x25|1": "GHP13-1825-01",
+  "aeropleat13|16x16|1": "GHP13-1616-01",
+  "aeropleat13|18x20|1": "GHP13-1820-01",
+  "aeropleat13|22x22|1": "GHP13-2222-01",
+  "aeropleat13|10x24|1": "GHP13-1024-01",
+  "aeropleat13|10x25|1": "GHP13-1025-01",
+  "aeropleat13|12x25|1": "GHP13-1225-01",
+  "aeropleat13|15x25|1": "GHP13-1525-01",
+  "aeropleat13|14x24|1": "GHP13-1424-01",
+  "aeropleat13|18x24|1": "GHP13-1824-01",
+  "aeropleat13|20x30|1": "GHP13-2030-01",
+  // ── 2" depth ──
+  "aeropleat13|16x20|2": "GHP13-1620-02",
+  "aeropleat13|20x20|2": "GHP13-2020-02",
+  "aeropleat13|20x25|2": "GHP13-2025-02",
+  "aeropleat13|16x25|2": "GHP13-1625-02",
+  "aeropleat13|24x24|2": "GHP13-2424-02",
+  "aeropleat13|12x24|2": "GHP13-1224-02",
+  "aeropleat13|20x24|2": "GHP13-2024-02",
+  "aeropleat13|18x24|2": "GHP13-1824-02",
+  "aeropleat13|18x25|2": "GHP13-1825-02",
+  "aeropleat13|14x20|2": "GHP13-1420-02",
+  "aeropleat13|14x25|2": "GHP13-1425-02",
+  "aeropleat13|16x24|2": "GHP13-1624-02",
+  "aeropleat13|25x25|2": "GHP13-2525-02",
+  "aeropleat13|12x20|2": "GHP13-1220-02",
+  "aeropleat13|10x20|2": "GHP13-1020-02",
+  "aeropleat13|16x16|2": "GHP13-1616-02",
+  "aeropleat13|15x20|2": "GHP13-1520-02",
+  "aeropleat13|18x20|2": "GHP13-1820-02",
+  "aeropleat13|15x25|2": "GHP13-1525-02",
+  // ── 4" depth ──
+  "aeropleat13|24x24|4": "GHP13-2424-04",
+  "aeropleat13|12x24|4": "GHP13-1224-04",
+  "aeropleat13|20x20|4": "GHP13-2020-04",
+  "aeropleat13|16x20|4": "GHP13-1620-04",
+  "aeropleat13|16x25|4": "GHP13-1625-04",
+  "aeropleat13|20x25|4": "GHP13-2025-04",
+  "aeropleat13|20x24|4": "GHP13-2024-04",
+  "aeropleat13|18x24|4": "GHP13-1824-04",
+  "aeropleat13|16x24|4": "GHP13-1624-04",
+  // ══ MH MV8 pleat ══
+  // ── 1" depth ──
+  "mv8|10x20|1": "MH-21208-011020",
+  "mv8|10x24|1": "MH-21208-011024",
+  "mv8|10x25|1": "MH-21208-011025",
+  "mv8|12x24|1": "MH-21208-011224",
+  "mv8|12x25|1": "MH-21208-011225",
+  "mv8|14x20|1": "MH-21208-011420",
+  "mv8|14x24|1": "MH-21208-011424",
+  "mv8|14x25|1": "MH-21208-011425",
+  "mv8|15x20|1": "MH-21208-011520",
+  "mv8|15x25|1": "MH-21208-011525",
+  "mv8|16x16|1": "MH-21208-011616",
+  "mv8|16x20|1": "MH-21208-011620",
+  "mv8|16x24|1": "MH-21208-011624",
+  "mv8|16x25|1": "MH-21208-011625",
+  "mv8|18x20|1": "MH-21208-011820",
+  "mv8|18x24|1": "MH-21208-011824",
+  "mv8|18x25|1": "MH-21208-011825",
+  "mv8|20x20|1": "MH-21208-012020",
+  "mv8|20x24|1": "MH-21208-012024",
+  "mv8|20x25|1": "MH-21208-012025",
+  "mv8|20x30|1": "MH-21208-012030",
+  "mv8|22x22|1": "MH-21208-012222",
+  "mv8|24x24|1": "MH-21208-012424",
+  "mv8|25x25|1": "MH-21208-012525",
+  // ── 2" depth ──
+  "mv8|10x20|2": "MH-21208-021020",
+  "mv8|12x20|2": "MH-21208-021220",
+  "mv8|12x24|2": "MH-21208-021224",
+  "mv8|14x20|2": "MH-21208-021420",
+  "mv8|14x25|2": "MH-21208-021425",
+  "mv8|15x20|2": "MH-21208-021520",
+  "mv8|16x16|2": "MH-21208-021616",
+  "mv8|16x20|2": "MH-21208-021620",
+  "mv8|16x24|2": "MH-21208-021624",
+  "mv8|16x25|2": "MH-21208-021625",
+  "mv8|16x30|2": "MH-21208-021630",
+  "mv8|18x18|2": "MH-21208-021818",
+  "mv8|18x20|2": "MH-21208-021820",
+  "mv8|18x24|2": "MH-21208-021824",
+  "mv8|18x25|2": "MH-21208-021825",
+  "mv8|20x20|2": "MH-21208-022020",
+  "mv8|20x24|2": "MH-21208-022024",
+  "mv8|20x25|2": "MH-21208-022025",
+  "mv8|20x30|2": "MH-21208-022030",
+  "mv8|24x24|2": "MH-21208-022424",
+  "mv8|25x25|2": "MH-21208-022525",
+  // ── 4" depth ──
+  "mv8|12x24|4": "MH-21208-041224",
+  "mv8|16x20|4": "MH-21208-041620",
+  "mv8|16x24|4": "MH-21208-041624",
+  "mv8|16x25|4": "MH-21208-041625",
+  "mv8|18x24|4": "MH-21208-041824",
+  "mv8|20x20|4": "MH-21208-042020",
+  "mv8|20x24|4": "MH-21208-042024",
+  "mv8|20x25|4": "MH-21208-042025",
+  "mv8|24x24|4": "MH-21208-042424",
+};
+
+// Look up a PN for productId + size label (any orientation, e.g. "20x24" or "24x20") + depth.
+// Returns null if no PN exists — displays simply omit the PN in that case.
+const getPartNumber = (productId, sizeLabel, depth) => {
+  const parts = String(sizeLabel).toLowerCase().split("x").map(Number);
+  if (parts.length !== 2 || parts.some(isNaN)) return null;
+  const [a, b] = parts;
+  const ns = a <= b ? `${a}x${b}` : `${b}x${a}`;
+  return PART_NUMBERS[`${productId}|${ns}|${depth}`] || null;
+};
+
+// ─── PER-PRODUCT STOCK AVAILABILITY ──────────────────────────────────────────
+// Rule: once a product has part numbers imported, the PN list IS the inventory —
+// any size in STOCK without a PN for that product+depth does not exist for that
+// product and is removed from the engine. Products with no PN list imported yet
+// (e.g. GHP13, MH MV8) fall back to the full STOCK inventory until their list arrives.
+const PRODUCTS_WITH_PNS = new Set(Object.keys(PART_NUMBERS).map(k => k.split("|")[0]));
+const getAvailableStock = (productId, depth) => {
+  const base = STOCK[depth] || [];
+  if (!PRODUCTS_WITH_PNS.has(productId)) return base;
+  return base.filter(([h, w]) => {
+    const ns = h <= w ? `${h}x${w}` : `${w}x${h}`;
+    return PART_NUMBERS[`${productId}|${ns}|${depth}`];
+  });
+};
 
 // ─── Inp: MODULE-LEVEL INPUT (fixes React focus bug) ─────────────────────────
 const Inp = (props) => <input {...props} />;
@@ -53,9 +369,9 @@ function getStockOrientations(stocks) {
   return orientations;
 }
 
-function findBestCut(customH, customW, depth, qty = 1) {
-  const stocks = STOCK[depth];
-  if (!stocks) return null;
+function findBestCut(customH, customW, depth, qty = 1, productId = null) {
+  const stocks = productId ? getAvailableStock(productId, depth) : STOCK[depth];
+  if (!stocks || stocks.length === 0) return null;
   const needH = customH, needW = customW;
   const results = [];
   const allOrientations = getStockOrientations(stocks);
@@ -166,31 +482,20 @@ function findBestCut(customH, customW, depth, qty = 1) {
     }
   }
 
-  // ── SORT (tier-based, common-sense ordering) ───────────────────────────
-  // Rule: pull the fewest stocks possible, get as many customs per stock as fit.
-  //   T0/T1  Single-stock multi-yield (1 stock → 2 customs) — preferred, then not
-  //   T2/T3  Single cut (1 stock → 1 custom)                — preferred, then not
-  //   T4-T6  Multi-stock multi-yield (butted stocks → 2 customs)
-  //   T7-T9  Linear butts & grids (multi-stock → 1 custom)
+  // ── SORT (tier-based) ──────────────────────────────────────────────────
   const tierScore = (r) => {
     const allPref = r.stockFilters.every(f => isPreferred(f.nomH, f.nomW));
+    const somePref = r.stockFilters.some(f => isPreferred(f.nomH, f.nomW));
     const allSame = r.stockFilters.every(f => f.nomH===r.stockFilters[0].nomH && f.nomW===r.stockFilters[0].nomW);
-    const isSingleStock = r.stockFilters.length === 1;
-    // Single-stock solutions always beat multi-stock
-    if (isSingleStock) {
-      if (r.multiYield) return allPref ? 0 : 1;   // 1 stock → 2 customs
-      return allPref ? 2 : 3;                      // 1 stock → 1 custom
-    }
-    // Multi-stock: multi-yield from butted stocks
-    if (r.multiYield) {
-      if (allPref && allSame) return 4;
-      if (allPref) return 5;
-      return 6;
-    }
-    // Multi-stock: linear butts & grids
-    if (allPref && allSame) return 7;
-    if (allPref) return 8;
-    return 9;
+    if (r.multiYield && allPref && allSame) return -3;
+    if (r.multiYield && allPref) return -2;
+    if (r.multiYield) return -1;
+    if (allPref && allSame && r.stockFilters.length > 1) return 0;
+    if (r.type === "single" && allPref) return 1;
+    if (allPref) return 2;
+    if (r.type === "single") return 3;
+    if (somePref) return 4;
+    return 5;
   };
   results.sort((a, b) =>
     tierScore(a) - tierScore(b) ||
@@ -396,21 +701,53 @@ function getMethodLabel(r) {
   return r.stockFilters.length + "-Filter Butt";
 }
 
+// ─── STOCK PULL CALCULATION ──────────────────────────────────────────────────
+// For a given result + qty, returns:
+//   arrangements: number of times the cut pattern is executed
+//   pulls:        array of { nomLabel, actH, actW, rotated, isPref, slots, count } per unique stock size
+//                 where count = slots × arrangements = total stock units to pull for that size
+//   total:        total stock units to pull for this line item
+// Formula: total = ceil(qty / yieldsPerStock) × stockFilters.length
+function calcStockPulls(r, qty) {
+  const yieldsPerStock = r.yieldsPerStock || 1;
+  const arrangements = r.multiYield ? Math.ceil(qty / yieldsPerStock) : qty;
+  const groups = {};
+  for (const sf of r.stockFilters) {
+    const nomLabel = sf.rotated ? `${sf.origNomH}x${sf.origNomW}` : `${sf.nomH}x${sf.nomW}`;
+    if (!groups[nomLabel]) {
+      groups[nomLabel] = {
+        nomLabel,
+        actH: sf.actH,
+        actW: sf.actW,
+        rotated: sf.rotated,
+        nomH: sf.nomH,
+        nomW: sf.nomW,
+        origNomH: sf.origNomH,
+        origNomW: sf.origNomW,
+        isPref: isPreferred(sf.nomH, sf.nomW),
+        slots: 0,
+      };
+    }
+    groups[nomLabel].slots += 1;
+  }
+  const pulls = Object.values(groups).map(g => ({ ...g, count: g.slots * arrangements }));
+  const total = pulls.reduce((s, p) => s + p.count, 0);
+  return { arrangements, pulls, total };
+}
+
 function calcStockSummary(cartItems) {
   const map = {};
   for (const item of cartItems) {
     if (!item.selectedResult) continue;
     const qty = item.qty || 1;
     const r = item.selectedResult;
-    const yieldsPerStock = r.yieldsPerStock || 1;
-    const stockNeeded = r.multiYield ? Math.ceil(qty / yieldsPerStock) : qty;
     const prod = PRODUCTS.find(p => p.id === item.productId) || PRODUCTS[0];
-    for (const sf of r.stockFilters) {
-      const nomLabel = sf.rotated ? `${sf.origNomH}x${sf.origNomW}` : `${sf.nomH}x${sf.nomW}`;
-      const sizeKey = `${nomLabel} x ${r.depth}"`;
+    const { pulls } = calcStockPulls(r, qty);
+    for (const p of pulls) {
+      const sizeKey = `${p.nomLabel} x ${r.depth}"`;
       const key = `${item.productId}||${sizeKey}`;
       if (!map[key]) map[key] = { productId: item.productId, productShort: prod.short, productLabel: prod.label, sizeKey, qty: 0 };
-      map[key].qty += stockNeeded;
+      map[key].qty += p.count;
     }
   }
   return Object.values(map).sort((a, b) => a.productLabel.localeCompare(b.productLabel) || a.sizeKey.localeCompare(b.sizeKey));
@@ -465,7 +802,7 @@ function PrintSheet({ order, cartItems, onClose }) {
             const r = item.selectedResult;
             const prod = PRODUCTS.find(p => p.id === item.productId) || PRODUCTS[0];
             const yieldsPerStock = r.yieldsPerStock || 1;
-            const stockNeeded = r.multiYield ? Math.ceil(item.qty / yieldsPerStock) : item.qty;
+            const { arrangements, pulls, total } = calcStockPulls(r, item.qty);
             return (
               <div key={item.id} style={{ background:"#fff", color:"#000", fontFamily:"'JetBrains Mono',monospace", width:"100%", minHeight:"min-content", padding:"0.5in", marginBottom:"8px", boxShadow:"0 2px 8px rgba(0,0,0,0.1)" }}>
                 {/* Header */}
@@ -514,18 +851,28 @@ function PrintSheet({ order, cartItems, onClose }) {
                       </div>
                       <div style={{ borderTop:"1px solid #eee", paddingTop:"10px" }}>
                         <div style={{ fontSize:"9px", fontWeight:"700", textTransform:"uppercase", letterSpacing:".5px", color:"#666", marginBottom:"4px" }}>Stock Required</div>
-                        {r.stockFilters.map((sf, si) => {
-                          const nomLabel = sf.rotated ? `${sf.origNomH}x${sf.origNomW}` : `${sf.nomH}x${sf.nomW}`;
-                          return (
-                            <div key={si} style={{ fontSize:"13px", fontWeight:"700", marginBottom:"3px" }}>
-                              {r.stockFilters.length > 1 && <span>{String.fromCharCode(65+si)}: </span>}
-                              Pull {stockNeeded} × {nomLabel} x {r.depth}" → makes {item.qty}
+                        {pulls.length === 1 ? (
+                          <div style={{ fontSize:"13px", fontWeight:"700", marginBottom:"3px" }}>
+                            {`Pull ${total} total ${pulls[0].nomLabel}x${r.depth}"s to make ${item.qty} filters${getPartNumber(item.productId, pulls[0].nomLabel, r.depth) ? ` — PN ${getPartNumber(item.productId, pulls[0].nomLabel, r.depth)}` : ""}`}
+                          </div>
+                        ) : (
+                          <>
+                            {pulls.map((p, pi) => {
+                              const pn = getPartNumber(item.productId, p.nomLabel, r.depth);
+                              return (
+                                <div key={pi} style={{ fontSize:"13px", fontWeight:"700", marginBottom:"3px" }}>
+                                  Pull Qty {p.count} of {p.nomLabel}x{r.depth}"{pn ? ` — PN ${pn}` : ""}
+                                </div>
+                              );
+                            })}
+                            <div style={{ fontSize:"12px", fontWeight:"700", marginBottom:"3px" }}>
+                              → to make {item.qty} filters
                             </div>
-                          );
-                        })}
+                          </>
+                        )}
                         {r.multiYield && (
                           <div style={{ background:"#f0f7ff", border:"1px solid #b3d4f7", borderRadius:"3px", padding:"5px 8px", fontSize:"10px", color:"#0066B3", fontWeight:"600", marginTop:"6px" }}>
-                            Multi-Yield: 2 custom filters per stock — {r.splitDirection === "2x1" ? "stacked vertically" : "side by side"}, waste from middle
+                            Multi-Yield: 2 custom filters per stock — {r.splitDirection === "height" ? "stacked vertically" : "side by side"}, waste from middle
                           </div>
                         )}
                         {!r.multiYield && r.type !== "single" && (
@@ -599,6 +946,7 @@ function PrintSheet({ order, cartItems, onClose }) {
                     <th style={{ padding:"6px 10px", textAlign:"left" }}>#</th>
                     <th style={{ padding:"6px 10px", textAlign:"left" }}>Product</th>
                     <th style={{ padding:"6px 10px", textAlign:"left" }}>Stock Filter Size</th>
+                    <th style={{ padding:"6px 10px", textAlign:"left" }}>Part Number</th>
                     <th style={{ padding:"6px 10px", textAlign:"left" }}>Preferred?</th>
                     <th style={{ padding:"6px 10px", textAlign:"right" }}>Qty to Pull</th>
                     <th style={{ padding:"6px 10px", textAlign:"left" }}>Notes</th>
@@ -608,11 +956,14 @@ function PrintSheet({ order, cartItems, onClose }) {
                   {stockSummary.map((row, idx) => {
                     const [nomH, nomW] = row.sizeKey.split(" x ")[0].split("x").map(Number);
                     const pref = isPreferred(nomH, nomW);
+                    const rowDepth = parseFloat(row.sizeKey.split(" x ")[1]);
+                    const pn = getPartNumber(row.productId, row.sizeKey.split(" x ")[0], rowDepth);
                     return (
                       <tr key={idx} style={{ background:"#fff" }}>
                         <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc" }}>{idx+1}</td>
                         <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc", fontWeight:"700" }}>{row.productLabel}</td>
                         <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc", fontWeight:"700" }}>{row.sizeKey}</td>
+                        <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc", fontWeight:"700" }}>{pn || "—"}</td>
                         <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc" }}>{pref ? "★ Yes" : "—"}</td>
                         <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc", fontWeight:"700", textAlign:"right", fontSize:"14px" }}>{row.qty}</td>
                         <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc" }}>Pull from bin</td>
@@ -620,7 +971,7 @@ function PrintSheet({ order, cartItems, onClose }) {
                     );
                   })}
                   <tr style={{ background:"#fff", fontWeight:"700" }}>
-                    <td colSpan={4} style={{ padding:"8px 10px", borderTop:"2px solid #111" }}>TOTAL STOCK FILTERS</td>
+                    <td colSpan={5} style={{ padding:"8px 10px", borderTop:"2px solid #111" }}>TOTAL STOCK FILTERS</td>
                     <td style={{ padding:"8px 10px", borderTop:"2px solid #111", textAlign:"right", fontSize:"14px" }}>{stockSummary.reduce((s,r)=>s+r.qty,0)}</td>
                     <td style={{ padding:"8px 10px", borderTop:"2px solid #111" }}></td>
                   </tr>
@@ -659,11 +1010,11 @@ export default function FilterCutDB() {
   const handleSearch = useCallback(() => {
     const h = parseFloat(customH), w = parseFloat(customW);
     if (!h || !w || h <= 0 || w <= 0) return;
-    const r = findBestCut(h, w, depth, qty);
+    const r = findBestCut(h, w, depth, qty, productId);
     setResults(r);
     setSearched(true);
     setSelectedIdx(0);
-  }, [customH, customW, depth, qty]);
+  }, [customH, customW, depth, qty, productId]);
 
   const handleAddToCart = () => {
     if (!results || !results[selectedIdx]) return;
@@ -743,13 +1094,18 @@ export default function FilterCutDB() {
 
         {showInventory && (
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">Stock Inventory — {depth}" Depth</div>
+            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">
+              Stock Inventory — {PRODUCTS.find(p=>p.id===productId)?.label} — {depth}" Depth ({getAvailableStock(productId, depth).length} sizes)
+            </div>
             <div className="flex flex-wrap gap-2">
-              {STOCK[depth]?.map(([h,w],i) => (
-                <span key={i} className={`text-sm font-mono px-3 py-1.5 rounded-lg border ${isPreferred(h,w) ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-slate-50 border-slate-200 text-slate-500"}`}>
-                  {h}x{w}
-                </span>
-              ))}
+              {getAvailableStock(productId, depth).map(([h,w],i) => {
+                const pn = getPartNumber(productId, `${h}x${w}`, depth);
+                return (
+                  <span key={i} title={pn || undefined} className={`text-sm font-mono px-3 py-1.5 rounded-lg border ${isPreferred(h,w) ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-slate-50 border-slate-200 text-slate-500"}`}>
+                    {h}x{w}{pn && <span className="text-[10px] text-slate-400 ml-1.5">{pn}</span>}
+                  </span>
+                );
+              })}
             </div>
           </div>
         )}
@@ -777,7 +1133,7 @@ export default function FilterCutDB() {
                 <label className="text-sm font-medium text-slate-500 block mb-3">Product</label>
                 <div className="flex flex-wrap gap-2">
                   {PRODUCTS.map(p => (
-                    <button key={p.id} onClick={() => setProductId(p.id)}
+                    <button key={p.id} onClick={() => {setProductId(p.id);setResults(null);setSearched(false);}}
                       className={`px-4 py-2 text-sm rounded-lg border-2 transition-all font-medium ${productId === p.id ? "bg-[#0066B3] border-[#0066B3] text-white shadow-md" : "bg-white border-slate-200 text-slate-500 hover:border-[#0066B3]/40 hover:text-[#0066B3]"}`}>
                       {p.label}
                     </button>
@@ -832,7 +1188,7 @@ export default function FilterCutDB() {
             {searched && !results && (
               <div className="bg-red-50 border border-red-200 rounded-xl p-8 text-center">
                 <div className="text-red-600 font-semibold text-base">No Solution Found</div>
-                <div className="text-red-400 text-sm mt-2">No stock filter combination in {depth}" depth can produce {customH}" × {customW}".</div>
+                <div className="text-red-400 text-sm mt-2">No {PRODUCTS.find(p=>p.id===productId)?.label} stock filter combination in {depth}" depth can produce {customH}" × {customW}".</div>
               </div>
             )}
 
@@ -876,13 +1232,13 @@ export default function FilterCutDB() {
                         </div>
                         {r.multiYield && (
                           <div className="text-xs text-violet-600 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2">
-                            Yields <strong>2</strong> custom filters per stock ({r.splitDirection === "2x1" ? "stacked" : "side-by-side"}) — waste strip from middle
+                            Yields <strong>2</strong> custom filters per stock ({r.splitDirection === "height" ? "stacked" : "side-by-side"}) — waste strip from middle
                           </div>
                         )}
                         <div className="flex gap-6">
                           <div><div className="text-xs font-semibold text-slate-400 uppercase mb-1">Trim</div><div className="font-mono text-sm text-slate-600">{r.trimH>0?`${r.trimH}" H`:""}{r.trimH>0&&r.trimW>0?" / ":""}{r.trimW>0?`${r.trimW}" W`:""}{!r.trimH&&!r.trimW?"None":""}</div></div>
                           <div><div className="text-xs font-semibold text-slate-400 uppercase mb-1">Cuts</div><div className="font-mono text-sm text-slate-600">{r.cuts}</div></div>
-                          {r.multiYield && <div><div className="text-xs font-semibold text-slate-400 uppercase mb-1">Stock Needed</div><div className="font-mono text-sm text-[#0066B3] font-bold">{Math.ceil(qty/2)} for {qty} pcs</div></div>}
+                          {r.multiYield && <div><div className="text-xs font-semibold text-slate-400 uppercase mb-1">Stock Needed</div><div className="font-mono text-sm text-[#0066B3] font-bold">{calcStockPulls(r, qty).total} for {qty} pcs</div></div>}
                         </div>
                       </div>
                       <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
@@ -932,7 +1288,7 @@ export default function FilterCutDB() {
                   const prod = PRODUCTS.find(p=>p.id===item.productId)||PRODUCTS[0];
                   const r = item.selectedResult;
                   const yieldsPerStock = r.yieldsPerStock || 1;
-                  const stockNeeded = r.multiYield ? Math.ceil(item.qty / yieldsPerStock) : item.qty;
+                  const { arrangements, pulls, total } = calcStockPulls(r, item.qty);
                   return (
                     <div key={item.id} className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
                       <div className="px-5 py-3.5 bg-slate-50 flex items-center justify-between border-b border-slate-100">
@@ -955,24 +1311,29 @@ export default function FilterCutDB() {
                       <div className="p-5 grid grid-cols-1 md:grid-cols-3 gap-5">
                         <div className="md:col-span-2 space-y-3">
                           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Stock Filters Required</div>
-                          {r.stockFilters.map((sf,si)=>(
-                            <div key={si} className="text-sm font-mono text-slate-600 flex items-center gap-2">
-                              {r.stockFilters.length>1&&<span className="text-slate-400 text-xs">{String.fromCharCode(65+si)}:</span>}
-                              <span className="text-slate-700 font-semibold">{sf.rotated?`${sf.origNomH}x${sf.origNomW}`:`${sf.nomH}x${sf.nomW}`} x {r.depth}"</span>
-                              <span className="text-slate-400 text-xs">({sf.actH}"×{sf.actW}")</span>
-                              {sf.rotated&&<span className="text-sky-600 text-xs bg-sky-50 px-1.5 py-0.5 rounded">rotated</span>}
-                              {isPreferred(sf.nomH,sf.nomW)&&<span className="text-amber-600 text-xs bg-amber-50 px-1.5 py-0.5 rounded">preferred</span>}
+                          {pulls.map((p, pi) => (
+                            <div key={pi} className="text-sm font-mono text-slate-600 flex items-center gap-2">
+                              <span className="text-slate-700 font-semibold">{p.nomLabel} x {r.depth}"</span>
+                              <span className="text-slate-400 text-xs">({p.actH}"×{p.actW}")</span>
+                              {p.rotated&&<span className="text-sky-600 text-xs bg-sky-50 px-1.5 py-0.5 rounded">rotated</span>}
+                              {p.isPref&&<span className="text-amber-600 text-xs bg-amber-50 px-1.5 py-0.5 rounded">preferred</span>}
                               <span className="text-slate-300">→</span>
-                              <span className="text-[#0066B3] font-bold">pull {stockNeeded}</span>
+                              <span className="text-[#0066B3] font-bold">pull {p.count}</span>
+                              {p.slots > 1 && <span className="text-slate-400 text-xs">({p.slots} slots × {arrangements} arrangements)</span>}
                             </div>
                           ))}
+                          {pulls.length > 1 && (
+                            <div className="text-sm font-mono text-slate-700 pt-1 border-t border-slate-100">
+                              <span className="text-slate-400">Total stock: </span><span className="text-[#0066B3] font-bold">{total}</span> for {item.qty} custom
+                            </div>
+                          )}
                           <div className="flex gap-6 pt-2 text-sm">
                             <div><span className="text-slate-400">Trim: </span><span className="font-mono text-slate-600">{r.trimH>0?`${r.trimH}" H`:""}{r.trimH>0&&r.trimW>0?" / ":""}{r.trimW>0?`${r.trimW}" W`:""}{!r.trimH&&!r.trimW?"None":""}</span></div>
                             <div><span className="text-slate-400">Cuts: </span><span className="font-mono text-slate-600">{r.cuts}</span></div>
                           </div>
                           {r.multiYield && (
                             <div className="text-xs text-violet-600 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2 inline-block">
-                              Multi-yield: {r.splitDirection === "2x1" ? "stacked" : "side-by-side"} — {yieldsPerStock} per stock → pull {stockNeeded} for {item.qty} pcs
+                              Multi-yield: {r.splitDirection === "height" ? "stacked" : "side-by-side"} — {yieldsPerStock} per stock, {arrangements} arrangement{arrangements!==1?"s":""} × {r.stockFilters.length} stock → pull {total} for {item.qty} pcs
                             </div>
                           )}
                         </div>
@@ -1037,8 +1398,7 @@ export default function FilterCutDB() {
                         const prod = PRODUCTS.find(p=>p.id===item.productId)||PRODUCTS[0];
                         const r = item.selectedResult;
                         if (!r) return null;
-                        const yieldsPerStock = r.yieldsPerStock || 1;
-                        const stockNeeded = r.multiYield ? Math.ceil(item.qty / yieldsPerStock) : item.qty;
+                        const { pulls, total } = calcStockPulls(r, item.qty);
                         return (
                           <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50/50">
                             <td className="px-5 py-4 text-slate-400">{idx+1}</td>
@@ -1047,10 +1407,10 @@ export default function FilterCutDB() {
                             <td className="px-5 py-4 text-[#0066B3] font-bold">{item.qty}</td>
                             <td className="px-5 py-4 text-slate-500 text-xs">{getMethodLabel(r)}</td>
                             <td className="px-5 py-4 text-sm font-mono text-slate-500">
-                              {r.stockFilters.map((sf,si)=>{
-                                const nomLabel = sf.rotated?`${sf.origNomH}x${sf.origNomW}`:`${sf.nomH}x${sf.nomW}`;
-                                return <div key={si}>pull {stockNeeded} × {nomLabel} x {r.depth}"</div>;
-                              })}
+                              {pulls.map((p, pi) => (
+                                <div key={pi}>pull {p.count} × {p.nomLabel} x {r.depth}"</div>
+                              ))}
+                              {pulls.length > 1 && <div className="text-[#0066B3] font-bold pt-1">Total: {total}</div>}
                             </td>
                           </tr>
                         );
@@ -1066,6 +1426,7 @@ export default function FilterCutDB() {
                       <th className="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">#</th>
                       <th className="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Product</th>
                       <th className="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Stock Filter Size</th>
+                      <th className="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Part Number</th>
                       <th className="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Preferred?</th>
                       <th className="text-right px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Qty to Pull</th>
                     </tr></thead>
@@ -1073,6 +1434,8 @@ export default function FilterCutDB() {
                       {stockSummary.map((row, idx) => {
                         const [nomH, nomW] = row.sizeKey.split(" x ")[0].split("x").map(Number);
                         const pref = isPreferred(nomH, nomW);
+                        const rowDepth = parseFloat(row.sizeKey.split(" x ")[1]);
+                        const pn = getPartNumber(row.productId, row.sizeKey.split(" x ")[0], rowDepth);
                         return (
                           <tr key={idx} className="border-b border-slate-100 hover:bg-slate-50/50">
                             <td className="px-5 py-4 text-slate-400 text-xs">{idx+1}</td>
@@ -1080,13 +1443,14 @@ export default function FilterCutDB() {
                               <span className="text-xs font-medium text-[#0066B3] bg-blue-50 border border-blue-100 px-2.5 py-1 rounded whitespace-nowrap">{row.productLabel}</span>
                             </td>
                             <td className="px-5 py-4 font-mono text-slate-700 font-semibold">{row.sizeKey}</td>
+                            <td className="px-5 py-4 font-mono text-slate-600 text-xs">{pn || <span className="text-slate-300">—</span>}</td>
                             <td className="px-5 py-4">{pref ? <span className="text-amber-600 text-xs bg-amber-50 px-2 py-1 rounded">Preferred</span> : <span className="text-slate-300 text-xs">—</span>}</td>
                             <td className="px-5 py-4 text-right font-mono text-[#0066B3] font-bold text-lg">{row.qty}</td>
                           </tr>
                         );
                       })}
                       <tr className="bg-slate-50 font-bold">
-                        <td colSpan={4} className="px-5 py-4 text-slate-700">TOTAL STOCK FILTERS</td>
+                        <td colSpan={5} className="px-5 py-4 text-slate-700">TOTAL STOCK FILTERS</td>
                         <td className="px-5 py-4 text-right text-[#0066B3] text-xl font-bold">{totalStockFilters}</td>
                       </tr>
                     </tbody>
