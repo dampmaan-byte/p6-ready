@@ -483,26 +483,30 @@ function findBestCut(customH, customW, depth, qty = 1, productId = null) {
   }
 
   // ── SORT (tier-based) ──────────────────────────────────────────────────
-  const tierScore = (r) => {
-    const allPref = r.stockFilters.every(f => isPreferred(f.nomH, f.nomW));
-    const somePref = r.stockFilters.some(f => isPreferred(f.nomH, f.nomW));
-    const allSame = r.stockFilters.every(f => f.nomH===r.stockFilters[0].nomH && f.nomW===r.stockFilters[0].nomW);
-    if (r.multiYield && allPref && allSame) return -3;
-    if (r.multiYield && allPref) return -2;
-    if (r.multiYield) return -1;
-    if (allPref && allSame && r.stockFilters.length > 1) return 0;
-    if (r.type === "single" && allPref) return 1;
-    if (allPref) return 2;
-    if (r.type === "single") return 3;
-    if (somePref) return 4;
-    return 5;
+  // T0 = single cut (1 stock → 1 custom)
+  // T1 = efficient multi-yield (1 stock → 2 customs only)
+  // T2 = everything else (butt joints, grids, multi-yield from butted stocks)
+  // Within tiers: preferred stock first → same-size sets → fewest stocks → least waste → fewest cuts
+  const tierOf = (r) => {
+    if (r.type === "single") return 0;
+    if (r.multiYield && r.stockFilters.length === 1) return 1;
+    return 2;
   };
-  results.sort((a, b) =>
-    tierScore(a) - tierScore(b) ||
-    a.stockFilters.length - b.stockFilters.length ||
-    a.wasteArea - b.wasteArea ||
-    a.cuts - b.cuts
-  );
+  results.sort((a, b) => {
+    const t = tierOf(a) - tierOf(b);
+    if (t) return t;
+    const prefA = a.stockFilters.every(f => isPreferred(f.nomH, f.nomW)) ? 0 : 1;
+    const prefB = b.stockFilters.every(f => isPreferred(f.nomH, f.nomW)) ? 0 : 1;
+    if (prefA !== prefB) return prefA - prefB;
+    const sameA = a.stockFilters.every(f => f.nomH === a.stockFilters[0].nomH && f.nomW === a.stockFilters[0].nomW) ? 0 : 1;
+    const sameB = b.stockFilters.every(f => f.nomH === b.stockFilters[0].nomH && f.nomW === b.stockFilters[0].nomW) ? 0 : 1;
+    if (sameA !== sameB) return sameA - sameB;
+    // Normalize per custom filter yielded: multi-yield wasteArea/stock-count cover 2 customs, others cover 1
+    const yA = a.yieldsPerStock || 1, yB = b.yieldsPerStock || 1;
+    return (a.stockFilters.length / yA) - (b.stockFilters.length / yB) ||
+      (a.wasteArea / yA) - (b.wasteArea / yB) ||
+      a.cuts - b.cuts;
+  });
   return results.length > 0 ? results.slice(0, 12) : null;
 }
 
