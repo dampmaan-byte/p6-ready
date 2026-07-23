@@ -472,6 +472,22 @@ function findBestCut(customH, customW, depth, qty = 1, productId = null) {
     };
     // Single stock multi-yield
     for (const f of allOrientations) addMultiYield([f], f.actH, f.actW);
+    // 2×2 multi-yield: FOUR customs from ONE stock (qty ≥ 3), waste cross from middle.
+    // Pieces sit in the four corners so every piece keeps framed outer edges.
+    if ((qty || 1) >= 3) {
+      for (const f of allOrientations) {
+        if (f.actH < needH * 2 || f.actW < needW * 2) continue;
+        const gapH = +(f.actH - needH * 2).toFixed(4);
+        const gapW = +(f.actW - needW * 2).toFixed(4);
+        if (!isSafeCut(gapH) || !isSafeCut(gapW)) continue;
+        const wasteArea = +((f.actH * f.actW) - (needH * needW * 4)).toFixed(4);
+        const cuts = (1 + (gapH > 0 ? 1 : 0)) + (1 + (gapW > 0 ? 1 : 0));
+        results.push({ type:"multi-2x2", multiYield:true, yieldsPerStock:4, splitDirection:"both",
+          stockFilters:[{ nomH:f.nomH, nomW:f.nomW, actH:f.actH, actW:f.actW, rotated:f.rotated, origNomH:f.origNomH, origNomW:f.origNomW }],
+          trimH:gapH, trimW:gapW, combinedW:f.actW, combinedH:f.actH,
+          wasteArea, cuts, customActH:needH, customActW:needW, depth });
+      }
+    }
     // Linear butt multi-yield (2, 3, 4 filters butted → split for 2 custom)
     for (const [hKey, filters] of Object.entries(byActH)) {
       const actH = parseFloat(hKey);
@@ -482,15 +498,44 @@ function findBestCut(customH, customW, depth, qty = 1, productId = null) {
     }
   }
 
+  // ── STRIP BUMP: 1 stock → 2 strips of custom height, butted end-to-end ──
+  // Cut two strips of needH from one stock (strip 1 from top edge, strip 2 from
+  // bottom edge, waste cap from the middle — framed outer edges preserved),
+  // then butt the strips end-to-end to double the usable length.
+  // Only offered when the custom width exceeds this orientation's width
+  // (i.e. a single cut from this orientation can't cover it).
+  for (const f of allOrientations) {
+    if (needW <= f.actW) continue;                      // single cut covers this orientation
+    if (f.actH < needH * 2) continue;                   // must fit two strips
+    const combinedW = +(f.actW * 2).toFixed(4);
+    if (combinedW < needW) continue;
+    const midWaste = +(f.actH - needH * 2).toFixed(4);  // cap from middle
+    const trimW = +(combinedW - needW).toFixed(4);
+    if (!isSafeCut(midWaste) || !isSafeCut(trimW)) continue;
+    const wasteArea = +((f.actH * f.actW) - (needH * needW)).toFixed(4);
+    // cuts: strip split (1) + second split if mid cap exists + butt joint + width trim
+    const cuts = 1 + (midWaste > 0 ? 1 : 0) + 1 + (trimW > 0 ? 1 : 0);
+    results.push({ type:"strip-bump", stripBump:true, yieldsPerStock:1,
+      stockFilters:[{ nomH:f.nomH, nomW:f.nomW, actH:f.actH, actW:f.actW, rotated:f.rotated, origNomH:f.origNomH, origNomW:f.origNomW }],
+      trimH:midWaste, trimW, combinedW, combinedH:f.actH,
+      wasteArea, cuts, customActH:needH, customActW:needW, depth });
+  }
+
   // ── SORT (tier-based) ──────────────────────────────────────────────────
-  // T0 = single cut (1 stock → 1 custom)
-  // T1 = efficient multi-yield (1 stock → 2 customs only)
-  // T2 = everything else (butt joints, grids, multi-yield from butted stocks)
-  // Within tiers: preferred stock first → same-size sets → fewest stocks → least waste → fewest cuts
+  // qty = 1:  T0 single cut → T2 strip bump → T3 rest
+  // qty > 1:  T0 single-stock multi-yield (fewest stocks per filter) → T1 single cut → T2 strip bump → T3 rest
+  // Within tiers: preferred stock first → same-size sets → fewest stocks/filter → least waste/filter → fewest cuts
   const tierOf = (r) => {
-    if (r.type === "single") return 0;
-    if (r.multiYield && r.stockFilters.length === 1) return 1;
-    return 2;
+    const my1 = r.multiYield && r.stockFilters.length === 1;
+    if ((qty || 1) > 1) {
+      if (my1) return 0;
+      if (r.type === "single") return 1;
+    } else {
+      if (r.type === "single") return 0;
+      if (my1) return 1;
+    }
+    if (r.stripBump) return 2;
+    return 3;
   };
   results.sort((a, b) => {
     const t = tierOf(a) - tierOf(b);
@@ -542,6 +587,43 @@ function CutDiagram({ result, compact = false, printMode = false }) {
     ? ["#222","#333","#444","#555","#666","#777"]
     : ["#64748b","#0066B3","#2563eb","#4f46e5","#0284c7","#0d9488"];
   const fontSize = compact ? 9 : 11;
+
+  // ── MULTI-YIELD 2×2 (4 per stock, waste cross from middle) ─────────
+  if (result.type === "multi-2x2") {
+    const f = result.stockFilters[0];
+    const scale = Math.min(drawW / f.actW, drawH / f.actH);
+    const rw = f.actW * scale, rh = f.actH * scale;
+    const ox = (svgW - rw) / 2, oy = (svgH - rh) / 2;
+    const ch = result.customActH * scale, cw = result.customActW * scale;
+    const midH = result.trimH * scale, midW = result.trimW * scale;
+    const nomLabel = f.rotated ? `${f.origNomH}x${f.origNomW}` : `${f.nomH}x${f.nomW}`;
+    const keeps = [
+      { x: ox, y: oy, n: "KEEP 1" }, { x: ox+cw+midW, y: oy, n: "KEEP 2" },
+      { x: ox, y: oy+ch+midH, n: "KEEP 3" }, { x: ox+cw+midW, y: oy+ch+midH, n: "KEEP 4" },
+    ];
+    return (
+      <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full" style={{ maxHeight: svgH, background: svgBg }}>
+        <rect x={ox} y={oy} width={rw} height={rh} fill={stockFill} stroke={stockStroke} strokeWidth={1.5} rx={2}/>
+        {midH > 0 && <rect x={ox} y={oy+ch} width={rw} height={midH} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
+        {midW > 0 && <rect x={ox+cw} y={oy} width={midW} height={rh} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
+        {keeps.map((k,i) => (
+          <g key={i}>
+            <rect x={k.x} y={k.y} width={cw} height={ch} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
+            <text x={k.x+cw/2} y={k.y+ch/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?8:10} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">{k.n}</text>
+          </g>
+        ))}
+        {midH > 0 && <text x={ox+cw/2} y={oy+ch+midH/2} textAnchor="middle" fill={wasteTextFill} fontSize={compact?7:8} fontFamily="monospace" dominantBaseline="middle">{result.trimH}" mid cap</text>}
+        {midW > 0 && <text x={ox+cw+midW/2} y={oy+ch/2} textAnchor="middle" fill={wasteTextFill} fontSize={compact?7:8} fontFamily="monospace" dominantBaseline="middle" transform={`rotate(-90,${ox+cw+midW/2},${oy+ch/2})`}>{result.trimW}" mid cap</text>}
+        <line x1={ox} y1={oy-10} x2={ox+cw} y2={oy-10} stroke={dimStroke} strokeWidth={1}/>
+        <text x={ox+cw/2} y={oy-15} textAnchor="middle" fill={dimFill} fontSize={fontSize} fontFamily="monospace">{result.customActW}"</text>
+        <line x1={ox-10} y1={oy} x2={ox-10} y2={oy+ch} stroke={dimStroke} strokeWidth={1}/>
+        <text x={ox-14} y={oy+ch/2} textAnchor="end" fill={dimFill} fontSize={fontSize} fontFamily="monospace" dominantBaseline="middle">{result.customActH}"</text>
+        <line x1={ox+rw+10} y1={oy} x2={ox+rw+10} y2={oy+rh} stroke={stkDimStroke} strokeWidth={1}/>
+        <text x={ox+rw+14} y={oy+rh/2} textAnchor="start" fill={stkDimFill} fontSize={fontSize-1} fontFamily="monospace" dominantBaseline="middle">{f.actH}"</text>
+        <text x={ox+rw/2} y={oy+rh+14} textAnchor="middle" fill={labelColors[0]} fontSize={compact?7:8} fontFamily="monospace">A: {nomLabel} — 4 filters from 1 stock</text>
+      </svg>
+    );
+  }
 
   // ── MULTI-YIELD 2×1 (stacked vertically, waste in middle) ──────────
   if (result.type === "multi-2x1") {
@@ -605,6 +687,60 @@ function CutDiagram({ result, compact = false, printMode = false }) {
         <text x={ox-14} y={oy+ch/2} textAnchor="end" fill={dimFill} fontSize={fontSize} fontFamily="monospace" dominantBaseline="middle">{result.customActH}"</text>
         {filters.length > 1 && <><line x1={ox} y1={oy+rh+10} x2={ox+rw} y2={oy+rh+10} stroke={stkDimStroke} strokeWidth={1}/><text x={ox+rw/2} y={oy+rh+22} textAnchor="middle" fill={stkDimFill} fontSize={fontSize-1} fontFamily="monospace">{totalStockW.toFixed(1)}" combined</text></>}
         {filters.map((f,i) => <text key={i} x={xPositions[i]+scaledWidths[i]/2} y={oy+rh+(filters.length>1?34:14)} textAnchor="middle" fill={labelColors[i%labelColors.length]} fontSize={Math.min(8,80/filters.length)} fontFamily="monospace">{String.fromCharCode(65+i)}: {f.nomH}x{f.nomW}</text>)}
+      </svg>
+    );
+  }
+
+  // ── STRIP BUMP (1 stock → 2 strips butted end-to-end) ──────────────
+  if (result.type === "strip-bump") {
+    const f = result.stockFilters[0];
+    const needH = result.customActH, needW = result.customActW;
+    const nomLabel = f.rotated ? `${f.origNomH}x${f.origNomW}` : `${f.nomH}x${f.nomW}`;
+    const dimTop = compact ? 24 : 32;
+    const gapMid = compact ? 20 : 26;
+    const asmMaxH = compact ? 24 : 32;
+    const botPad = compact ? 36 : 44;
+    const sideP = compact ? 34 : 46;
+    const availW = svgW - sideP * 2;
+    const stockRegionH = svgH - dimTop - gapMid - asmMaxH - botPad;
+    const s1 = Math.min(availW / f.actW, stockRegionH / f.actH);
+    const sw = f.actW * s1, sh = f.actH * s1;
+    const sx = (svgW - sw) / 2, sy = dimTop;
+    const stripH = needH * s1, midH = result.trimH * s1;
+    const s2 = Math.min(availW / result.combinedW, asmMaxH / needH);
+    const aw = result.combinedW * s2, ah = needH * s2;
+    const ax = (svgW - aw) / 2, ay = sy + sh + gapMid;
+    const segW = f.actW * s2, keepW = needW * s2;
+    const sbFont = compact ? 7 : 8;
+    return (
+      <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full" style={{ maxHeight: svgH, background: svgBg }}>
+        {/* Stock with two strips + mid cap */}
+        <rect x={sx} y={sy} width={sw} height={sh} fill={stockFill} stroke={stockStroke} strokeWidth={1.5} rx={2}/>
+        <rect x={sx} y={sy} width={sw} height={stripH} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
+        <text x={sx+sw/2} y={sy+stripH/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?8:10} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">STRIP 1</text>
+        {midH > 0 && <rect x={sx} y={sy+stripH} width={sw} height={midH} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
+        {midH > 0 && <text x={sx+sw/2} y={sy+stripH+midH/2} textAnchor="middle" fill={wasteTextFill} fontSize={sbFont} fontFamily="monospace" dominantBaseline="middle">{result.trimH}" mid cap</text>}
+        <rect x={sx} y={sy+sh-stripH} width={sw} height={stripH} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
+        <text x={sx+sw/2} y={sy+sh-stripH/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?8:10} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">STRIP 2</text>
+        <line x1={sx} y1={sy-10} x2={sx+sw} y2={sy-10} stroke={stkDimStroke} strokeWidth={1}/>
+        <text x={sx+sw/2} y={sy-14} textAnchor="middle" fill={stkDimFill} fontSize={sbFont+1} fontFamily="monospace">{f.actW}" stk</text>
+        <line x1={sx-10} y1={sy} x2={sx-10} y2={sy+stripH} stroke={dimStroke} strokeWidth={1}/>
+        <text x={sx-13} y={sy+stripH/2} textAnchor="end" fill={dimFill} fontSize={sbFont+1} fontFamily="monospace" dominantBaseline="middle">{needH}"</text>
+        <line x1={sx+sw+10} y1={sy} x2={sx+sw+10} y2={sy+sh} stroke={stkDimStroke} strokeWidth={1}/>
+        <text x={sx+sw+13} y={sy+sh/2} textAnchor="start" fill={stkDimFill} fontSize={sbFont+1} fontFamily="monospace" dominantBaseline="middle">{f.actH}"</text>
+        {/* Arrow / instruction */}
+        <text x={svgW/2} y={sy+sh+gapMid/2+3} textAnchor="middle" fill={dimFill} fontSize={sbFont+1} fontWeight="bold" fontFamily="monospace">▼ butt strips end-to-end ▼</text>
+        {/* Assembled long filter */}
+        <rect x={ax} y={ay} width={segW} height={ah} fill={stockFill} stroke={stockStroke} strokeWidth={1} rx={2}/>
+        <rect x={ax+segW} y={ay} width={segW} height={ah} fill={stockFill} stroke={stockStroke} strokeWidth={1} rx={2}/>
+        <rect x={ax} y={ay} width={keepW} height={ah} fill={keepFill} fillOpacity={keepFillOp} stroke={keepStroke} strokeWidth={2} rx={2}/>
+        <text x={ax+keepW/2} y={ay+ah/2} textAnchor="middle" fill={keepTextFill} fontSize={compact?8:10} fontWeight="bold" fontFamily="monospace" dominantBaseline="middle">KEEP</text>
+        <line x1={ax+segW} y1={ay-3} x2={ax+segW} y2={ay+ah+3} stroke={jointStroke} strokeWidth={2} strokeDasharray="4 3"/>
+        {result.trimW > 0 && <rect x={ax+keepW} y={ay} width={aw-keepW} height={ah} fill={wasteFill} fillOpacity={wasteFillOp} stroke={wasteStroke} strokeWidth={1} strokeDasharray="4 2"/>}
+        {result.trimW > 0 && (aw-keepW) > 34 && <text x={ax+keepW+(aw-keepW)/2} y={ay+ah/2} textAnchor="middle" fill={wasteTextFill} fontSize={sbFont} fontFamily="monospace" dominantBaseline="middle">{result.trimW}" waste</text>}
+        <line x1={ax} y1={ay+ah+7} x2={ax+keepW} y2={ay+ah+7} stroke={dimStroke} strokeWidth={1}/>
+        <text x={ax+keepW/2} y={ay+ah+17} textAnchor="middle" fill={dimFill} fontSize={sbFont+1} fontFamily="monospace">{needW}"</text>
+        <text x={svgW/2} y={ay+ah+(compact?27:30)} textAnchor="middle" fill={labelColors[0]} fontSize={sbFont} fontFamily="monospace">A: {nomLabel} — strip 1 + strip 2</text>
       </svg>
     );
   }
@@ -696,6 +832,8 @@ function CutDiagram({ result, compact = false, printMode = false }) {
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 function getMethodLabel(r) {
+  if (r.stripBump) return "Strip Bump (1 stock, 2 strips)";
+  if (r.type === "multi-2x2") return "Multi-Yield 2x2 (4 per stock)";
   if (r.multiYield) {
     const dir = r.splitDirection === "height" ? "2x1" : "1x2";
     return r.stockFilters.length > 1 ? "Multi-Yield " + dir + " (" + r.stockFilters.length + "-stock butt)" : "Multi-Yield " + dir;
@@ -876,10 +1014,15 @@ function PrintSheet({ order, cartItems, onClose }) {
                         )}
                         {r.multiYield && (
                           <div style={{ background:"#f0f7ff", border:"1px solid #b3d4f7", borderRadius:"3px", padding:"5px 8px", fontSize:"10px", color:"#0066B3", fontWeight:"600", marginTop:"6px" }}>
-                            Multi-Yield: 2 custom filters per stock — {r.splitDirection === "height" ? "stacked vertically" : "side by side"}, waste from middle
+                            Multi-Yield: {r.yieldsPerStock || 2} custom filters per stock — {r.splitDirection === "both" ? "2×2 grid" : r.splitDirection === "height" ? "stacked vertically" : "side by side"}, waste from middle
                           </div>
                         )}
-                        {!r.multiYield && r.type !== "single" && (
+                        {r.stripBump && (
+                          <div style={{ background:"#f0f0f0", border:"1px solid #999", borderRadius:"3px", padding:"5px 8px", fontSize:"10px", color:"#111", fontWeight:"600", marginTop:"6px" }}>
+                            Strip Bump: cut two {item.customH}" strips from ONE stock (cap from middle), butt strips end-to-end → combined {r.combinedW}" → trim length to {item.customW}"
+                          </div>
+                        )}
+                        {!r.multiYield && !r.stripBump && r.type !== "single" && (
                           <div style={{ background:"#f0f0f0", border:"1px solid #999", borderRadius:"3px", padding:"5px 8px", fontSize:"10px", color:"#111", marginTop:"6px" }}>
                             {r.layout === "grid"
                               ? `${r.gridRows}×${r.gridCols} grid — butt and tape seams, then trim to ${item.customW}" × ${item.customH}"`
@@ -1214,6 +1357,7 @@ export default function FilterCutDB() {
                         {selectedIdx===i && <span className="text-xs font-bold text-[#0066B3] bg-blue-100 px-2.5 py-1 rounded-md">SELECTED</span>}
                         {i===0 && selectedIdx!==i && <span className="text-xs font-bold text-emerald-600 bg-emerald-100 px-2.5 py-1 rounded-md">BEST</span>}
                         {r.multiYield && <span className="text-xs font-bold text-violet-600 bg-violet-100 px-2.5 py-1 rounded-md">MULTI-YIELD</span>}
+                        {r.stripBump && <span className="text-xs font-bold text-teal-600 bg-teal-100 px-2.5 py-1 rounded-md">STRIP BUMP</span>}
                         <span className="text-sm font-medium text-slate-600">
                           Option {i+1} — {getMethodLabel(r)}
                         </span>
@@ -1236,7 +1380,12 @@ export default function FilterCutDB() {
                         </div>
                         {r.multiYield && (
                           <div className="text-xs text-violet-600 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2">
-                            Yields <strong>2</strong> custom filters per stock ({r.splitDirection === "height" ? "stacked" : "side-by-side"}) — waste strip from middle
+                            Yields <strong>{r.yieldsPerStock}</strong> custom filters per stock ({r.splitDirection === "both" ? "2×2 grid" : r.splitDirection === "height" ? "stacked" : "side-by-side"}) — waste from middle
+                          </div>
+                        )}
+                        {r.stripBump && (
+                          <div className="text-xs text-teal-700 bg-teal-50 border border-teal-200 rounded-lg px-3 py-2">
+                            Strip Bump: cut <strong>2 strips</strong> of {r.customActH}" from <strong>one</strong> stock (cap from middle), butt strips end-to-end → {r.combinedW}" length, trim to {r.customActW}"
                           </div>
                         )}
                         <div className="flex gap-6">
@@ -1301,6 +1450,7 @@ export default function FilterCutDB() {
                           <span className="text-sm font-mono font-semibold text-slate-700">{item.customH}" × {item.customW}" × {r.depth}"</span>
                           <span className="text-xs text-[#0066B3] bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md font-medium">{prod.short}</span>
                           {r.multiYield && <span className="text-xs text-violet-600 bg-violet-50 px-2 py-0.5 rounded-md font-medium">Multi-Yield</span>}
+                          {r.stripBump && <span className="text-xs text-teal-600 bg-teal-50 px-2 py-0.5 rounded-md font-medium">Strip Bump</span>}
                           <span className="text-xs text-slate-400">{getMethodLabel(r)}</span>
                         </div>
                         <div className="flex items-center gap-4">
@@ -1337,7 +1487,12 @@ export default function FilterCutDB() {
                           </div>
                           {r.multiYield && (
                             <div className="text-xs text-violet-600 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2 inline-block">
-                              Multi-yield: {r.splitDirection === "height" ? "stacked" : "side-by-side"} — {yieldsPerStock} per stock, {arrangements} arrangement{arrangements!==1?"s":""} × {r.stockFilters.length} stock → pull {total} for {item.qty} pcs
+                              Multi-yield: {r.splitDirection === "both" ? "2×2 grid" : r.splitDirection === "height" ? "stacked" : "side-by-side"} — {yieldsPerStock} per stock, {arrangements} arrangement{arrangements!==1?"s":""} × {r.stockFilters.length} stock → pull {total} for {item.qty} pcs
+                            </div>
+                          )}
+                          {r.stripBump && (
+                            <div className="text-xs text-teal-700 bg-teal-50 border border-teal-200 rounded-lg px-3 py-2 inline-block">
+                              Strip Bump: 2 strips of {item.customH}" from one stock, butted end-to-end → 1 stock per filter, pull {total} for {item.qty} pcs
                             </div>
                           )}
                         </div>
