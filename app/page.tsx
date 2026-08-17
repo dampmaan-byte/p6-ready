@@ -522,7 +522,7 @@ function findBestCut(customH, customW, depth, qty = 1, productId = null) {
   }
 
   // ── SORT (tier-based) ──────────────────────────────────────────────────
-  // qty = 1:  T0 single cut → T2 strip bump → T3 rest
+  // qty = 1:  T0 single cut → T1 plain 2-filter butt (simplest known method) → T2 strip bump → T3 rest
   // qty > 1:  T0 single-stock multi-yield (fewest stocks per filter) → T1 single cut → T2 strip bump → T3 rest
   // Within tiers: preferred stock first → same-size sets → fewest stocks/filter → least waste/filter → fewest cuts
   const tierOf = (r) => {
@@ -532,7 +532,7 @@ function findBestCut(customH, customW, depth, qty = 1, productId = null) {
       if (r.type === "single") return 1;
     } else {
       if (r.type === "single") return 0;
-      if (my1) return 1;
+      if (r.type === "linear-2") return 1; // one filter: a simple 2-stock butt beats strip cutting
     }
     if (r.stripBump) return 2;
     return 3;
