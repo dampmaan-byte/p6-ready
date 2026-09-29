@@ -35,6 +35,56 @@ const toActualDepth = (d) => DEPTH_ACTUAL[d];
 const PREFERRED = new Set(["16x20","20x20","20x25","16x25","24x24","20x24","12x24","20x30","25x25"]);
 const isPreferred = (nomH, nomW) => PREFERRED.has(`${nomH}x${nomW}`) || PREFERRED.has(`${nomW}x${nomH}`);
 
+// ─── PACKING SLIP IMPORT (deterministic text parser — no engine changes) ─────
+// Reads pasted picking-ticket text. Only lines with a "10"-prefixed custom item
+// number are used:  <qty> [_____ <b/o>] 10PREFIX-H-W-DD [description]
+// Longest prefix first so "10FP" never swallows "10FPD9".
+const IMPORT_PREFIXES = [
+  ["10GHP13", "aeropleat13"],
+  ["10FPD9",  "dual9"],
+  ["10GSP",   "aeropleat3"],
+  ["10MH",    "mv8"],
+  ["10FP",    "3030"],
+];
+const IMPORT_DEPTHS = { "01": 1, "02": 2, "04": 4 };
+const IMPORT_LINE_RE  = /^\s*(\d+)\s+(?:_+\s+\d+\s+)?(10[A-Z0-9]+)-(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)-(\d{2})\b\s*(.*)$/i;
+const IMPORT_TOKEN_RE = /\b(10[A-Z0-9]*)-(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)-(\d{2})\b/i;
+const IMPORT_ORDER_RE = /\bORD\d{6,}\b/i;
+
+function parseTicketText(text) {
+  const rows = [], attention = [];
+  let ignored = 0, orderNumber = null;
+  const lines = String(text || "").split(/\r?\n/);
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (!orderNumber) { const om = line.match(IMPORT_ORDER_RE); if (om) orderNumber = om[0].toUpperCase(); }
+    const m = line.match(IMPORT_LINE_RE);
+    if (!m) {
+      // A custom-looking token with no readable qty in front of it
+      if (IMPORT_TOKEN_RE.test(line)) attention.push({ line, why: "Custom item found but qty could not be read" });
+      else ignored++;
+      continue;
+    }
+    const [, qtyS, pfxRaw, hS, wS, dd, desc] = m;
+    const pfx = pfxRaw.toUpperCase();
+    const hit = IMPORT_PREFIXES.find(([p]) => p === pfx);
+    if (!hit) { attention.push({ line, why: `Unknown product prefix ${pfx}` }); continue; }
+    const depth = IMPORT_DEPTHS[dd];
+    if (!depth) { attention.push({ line, why: `Depth code -${dd} not supported (01/02/04 only)` }); continue; }
+    const qty = parseInt(qtyS, 10), h = parseFloat(hS), w = parseFloat(wS);
+    if (!qty || qty < 1 || !h || !w) { attention.push({ line, why: "Bad qty or size" }); continue; }
+    // Cross-check description "HxWxD" against the item number; item number wins, mismatch is flagged
+    let flag = null;
+    const dm = (desc || "").trim().match(/^(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+)(?![\d.])/i);
+    if (dm && (parseFloat(dm[1]) !== h || parseFloat(dm[2]) !== w || parseInt(dm[3], 10) !== depth)) {
+      flag = `Item # says ${h}x${w}x${depth} but description says ${dm[1]}x${dm[2]}x${dm[3]} — verify before cutting`;
+    }
+    rows.push({ productId: hit[1], prefix: pfx, itemNumber: `${pfxRaw}-${hS}-${wS}-${dd}`, qty, h, w, depth, flag, line });
+  }
+  return { rows, attention, ignored, orderNumber };
+}
+
 // ─── PART NUMBERS (stock filters only) ───────────────────────────────────────
 // Key: productId|normalizedSize|depth  (size normalized small-dimension-first)
 // Only sizes present in STOCK are listed; retired/non-app SKUs are intentionally omitted.
@@ -1173,6 +1223,8 @@ export default function FilterCutDB() {
       qty,
       depth,
       selectedResult: results[selectedIdx],
+      allResults: results,
+      flag: null,
     };
     setCartItems(prev => [...prev, item]);
     setView("cart");
@@ -1186,11 +1238,86 @@ export default function FilterCutDB() {
     setCartItems(prev => prev.map(i => i.id === id ? { ...i, qty: q } : i));
   };
 
+  // Cart review: switch a line to a different engine option (same result objects the builder showed)
+  const selectCartOption = (id, optIdx) => {
+    setCartItems(prev => prev.map(i => {
+      if (i.id !== id || !i.allResults || !i.allResults[optIdx]) return i;
+      return { ...i, selectedResult: i.allResults[optIdx], selectedIdx: optIdx };
+    }));
+  };
+  const clearCartFlag = (id) => setCartItems(prev => prev.map(i => i.id === id ? { ...i, flag: null } : i));
+
+  // Flagged line with no solution → send it to the builder pre-filled and drop it from the cart
+  const buildManually = (item) => {
+    if (item.productId) setProductId(item.productId);
+    setCustomH(String(item.customH));
+    setCustomW(String(item.customW));
+    setDepth(item.depth);
+    setQty(item.qty);
+    const r = findBestCut(item.customH, item.customW, item.depth, item.qty, item.productId || productId);
+    setResults(r); setSearched(true); setSelectedIdx(0);
+    setCartItems(prev => prev.filter(i => i.id !== item.id));
+    setShowImport(false);
+    setView("builder");
+  };
+
+  // ── Packing slip import ──
+  const [showImport, setShowImport]     = useState(false);
+  const [importText, setImportText]     = useState("");
+  const [importReport, setImportReport] = useState(null);
+  const importFileRef = useRef(null);
+
+  const runImport = (text) => {
+    const parsed = parseTicketText(text);
+    if (parsed.rows.length === 0 && parsed.attention.length === 0) return; // nothing usable pasted — stay put
+    const baseId = Date.now();
+    const items = parsed.rows.map((row, i) => {
+      const res = findBestCut(row.h, row.w, row.depth, row.qty, row.productId);
+      const prodLabel = (PRODUCTS.find(p => p.id === row.productId) || {}).label || row.productId;
+      return {
+        id: baseId + i,
+        productId: row.productId,
+        customH: row.h,
+        customW: row.w,
+        qty: row.qty,
+        depth: row.depth,
+        selectedResult: res ? res[0] : null,
+        allResults: res,
+        selectedIdx: 0,
+        flag: res ? row.flag : `No stock combination in ${row.depth}" ${prodLabel} can make ${row.h}" × ${row.w}" — build manually or remove`,
+        itemNumber: row.itemNumber,
+        source: "import",
+      };
+    });
+    const ready   = items.filter(i => i.selectedResult && !i.flag).length;
+    const flagged = items.filter(i => !i.selectedResult || i.flag).length;
+    let orderNote = null;
+    if (parsed.orderNumber) {
+      if (!orderNumber.trim()) setOrderNumber(parsed.orderNumber);
+      else if (orderNumber.trim().toUpperCase() !== parsed.orderNumber) orderNote = `Ticket shows ${parsed.orderNumber}; Order Number field left as "${orderNumber}"`;
+    }
+    setCartItems(prev => [...prev, ...items]);
+    setImportReport({ total: items.length, ready, flagged, attention: parsed.attention, ignored: parsed.ignored, orderNumber: parsed.orderNumber, orderNote });
+    setImportText("");
+    setShowImport(false);
+    setView("cart");
+  };
+
+  const handleImportFile = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = ev => { setImportText(String(ev.target.result || "")); };
+    reader.readAsText(f);
+    e.target.value = "";
+  };
+
   const stockSummary = useMemo(() => calcStockSummary(cartItems), [cartItems]);
   const totalCustomFilters = useMemo(() => cartItems.reduce((s, i) => s + (i.qty || 1), 0), [cartItems]);
   const totalStockFilters = useMemo(() => stockSummary.reduce((s, row) => s + row.qty, 0), [stockSummary]);
 
-  const canGenerate = cartItems.length > 0 && cartItems.every(i => i.selectedResult);
+  const flaggedCount = cartItems.filter(i => !i.selectedResult || i.flag).length;
+  const canGenerate = cartItems.length > 0 && flaggedCount === 0 && cartItems.every(i => i.selectedResult);
 
   const tabs = [
     { id:"builder", label:"Filter Builder" },
@@ -1271,7 +1398,52 @@ export default function FilterCutDB() {
                   <label className="text-sm font-medium text-slate-500 block mb-2">Customer Name</label>
                   <Inp value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="e.g. ACME Corp" className={`${inputCls} w-60`} />
                 </div>
+                <div className="flex items-end">
+                  <button onClick={() => setShowImport(!showImport)}
+                    className={`px-5 py-2.5 text-sm rounded-lg border-2 transition-all font-medium flex items-center gap-2 ${showImport ? "bg-[#0066B3] border-[#0066B3] text-white shadow-md" : "bg-white border-slate-200 text-slate-500 hover:border-[#0066B3]/40 hover:text-[#0066B3]"}`}>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                    Import from Packing Slip
+                  </button>
+                </div>
               </div>
+
+              {showImport && (
+                <div className="mt-5 pt-5 border-t border-slate-100">
+                  <div className="flex flex-wrap items-start gap-6">
+                    <div className="flex-1 min-w-[320px]">
+                      <label className="text-sm font-medium text-slate-500 block mb-2">Paste the picking ticket text (Ctrl+A / Ctrl+C on the PDF, then paste here)</label>
+                      <textarea value={importText} onChange={e => setImportText(e.target.value)} rows={8} spellCheck={false}
+                        placeholder={"1 _______ 0 10FPD9-15.5-49.5-01 15.50x49.50x1 dual 9\n3 _______ 0 10FPD9-8.5-54.5-01 8.50x54.50x1 dual 9\n..."}
+                        className={`${inputCls} w-full font-mono text-xs leading-relaxed`} />
+                      <div className="flex items-center gap-3 mt-3">
+                        <button onClick={() => { if (importText.trim()) runImport(importText); }}
+                          className="bg-[#0066B3] hover:bg-[#005299] text-white font-semibold px-8 py-2.5 rounded-lg text-sm transition-all shadow-sm hover:shadow-md">
+                          Build Cart
+                        </button>
+                        <input ref={importFileRef} type="file" accept=".txt,.csv,.tsv,text/plain" onChange={handleImportFile} className="hidden" />
+                        <button onClick={() => importFileRef.current && importFileRef.current.click()}
+                          className="text-sm text-slate-500 hover:text-[#0066B3] border border-slate-200 hover:border-[#0066B3] rounded-lg px-4 py-2 transition-colors">
+                          Load .txt / .csv file
+                        </button>
+                        {importText.trim() && <span className="text-xs text-slate-400">{parseTicketText(importText).rows.length} custom line{parseTicketText(importText).rows.length !== 1 ? "s" : ""} detected</span>}
+                      </div>
+                    </div>
+                    <div className="w-64 bg-slate-50 border border-slate-200 rounded-lg p-4 text-xs text-slate-500 space-y-1.5">
+                      <div className="font-semibold text-slate-600 uppercase tracking-wider text-[10px] mb-2">How it reads the ticket</div>
+                      <div>Only item numbers starting with a custom prefix are used; everything else on the slip is ignored.</div>
+                      <div className="pt-1 font-mono text-[11px] text-slate-600 space-y-0.5">
+                        <div>10GSP → Camfil AP3 (GSP)</div>
+                        <div>10FP → Camfil 30/30</div>
+                        <div>10GHP13 → Camfil GHP13</div>
+                        <div>10MH → MH MV8 pleat</div>
+                        <div>10FPD9 → Camfil Dual MV9/9A</div>
+                      </div>
+                      <div className="pt-1">Format: <span className="font-mono">10FPD9-H-W-01</span> → H × W × 1" (01/02/04 = depth). Qty comes from the Ordered column.</div>
+                      <div className="pt-1">Each line gets the engine's best option; you can switch options in the cart. Lines the engine can't solve, or where the description disagrees with the item number, are flagged and block the MFG sheet until resolved.</div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
@@ -1430,6 +1602,31 @@ export default function FilterCutDB() {
               )}
             </div>
 
+            {importReport && (
+              <div className={`rounded-xl border p-5 shadow-sm ${importReport.flagged > 0 || importReport.attention.length > 0 ? "bg-amber-50 border-amber-200" : "bg-emerald-50/30 border-slate-200"}`}>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-2 text-sm">
+                    <div className="font-semibold text-slate-700">
+                      Imported {importReport.total} custom line{importReport.total !== 1 ? "s" : ""}{importReport.orderNumber ? ` from ${importReport.orderNumber}` : ""} —
+                      <span className="text-emerald-600"> {importReport.ready} ready</span>
+                      {importReport.flagged > 0 && <span className="text-red-600">, {importReport.flagged} flagged (must be resolved before the MFG sheet)</span>}
+                      <span className="text-slate-400">, {importReport.ignored} non-custom line{importReport.ignored !== 1 ? "s" : ""} ignored</span>
+                    </div>
+                    {importReport.orderNote && <div className="text-xs text-amber-700">{importReport.orderNote}</div>}
+                    {importReport.attention.length > 0 && (
+                      <div className="text-xs text-slate-600">
+                        <div className="font-semibold text-amber-700 mb-1">Not imported — needs a look:</div>
+                        {importReport.attention.map((a, i) => (
+                          <div key={i} className="font-mono">{a.line.length > 70 ? a.line.slice(0, 70) + "…" : a.line} <span className="text-amber-700 font-sans">— {a.why}</span></div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button onClick={() => setImportReport(null)} className="text-xs text-slate-400 hover:text-slate-600 whitespace-nowrap">Dismiss</button>
+                </div>
+              </div>
+            )}
+
             {cartItems.length === 0 ? (
               <div className="bg-white border border-slate-200 rounded-xl p-12 text-center shadow-sm">
                 <div className="text-slate-400 text-base">No items in cart yet.</div>
@@ -1440,10 +1637,41 @@ export default function FilterCutDB() {
                 {cartItems.map((item, idx) => {
                   const prod = PRODUCTS.find(p=>p.id===item.productId)||PRODUCTS[0];
                   const r = item.selectedResult;
+
+                  // ── Flagged line with NO engine solution: red block, cannot print ──
+                  if (!r) {
+                    return (
+                      <div key={item.id} className="rounded-xl border-2 border-red-200 bg-red-50 overflow-hidden shadow-sm">
+                        <div className="px-5 py-3.5 flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs font-bold text-red-600 bg-white border border-red-200 px-2.5 py-1 rounded-md">LINE {idx+1} — NEEDS MANUAL PICK</span>
+                            <span className="text-sm font-mono font-semibold text-slate-700">{item.customH}" × {item.customW}" × {item.depth}"</span>
+                            <span className="text-xs text-[#0066B3] bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md font-medium">{prod.short}</span>
+                            <span className="text-xs text-slate-500">Qty {item.qty}</span>
+                            {item.itemNumber && <span className="text-xs font-mono text-slate-400">{item.itemNumber}</span>}
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <button onClick={()=>buildManually(item)} className="text-sm font-semibold text-[#0066B3] hover:underline">Build manually</button>
+                            <button onClick={()=>removeCartItem(item.id)} className="text-red-400 hover:text-red-500 text-sm transition-colors font-medium">Remove</button>
+                          </div>
+                        </div>
+                        <div className="px-5 pb-4 text-sm text-red-600">{item.flag}</div>
+                      </div>
+                    );
+                  }
+
                   const yieldsPerStock = r.yieldsPerStock || 1;
                   const { arrangements, pulls, total } = calcStockPulls(r, item.qty);
+                  const opts = item.allResults || [];
+                  const curIdx = Math.max(0, opts.indexOf(r));
                   return (
-                    <div key={item.id} className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                    <div key={item.id} className={`rounded-xl border bg-white overflow-hidden shadow-sm ${item.flag ? "border-amber-200" : "border-slate-200"}`}>
+                      {item.flag && (
+                        <div className="px-5 py-2.5 bg-amber-50 border-b border-amber-200 flex items-center justify-between gap-4">
+                          <div className="text-sm text-amber-700"><span className="font-bold">CHECK:</span> {item.flag}</div>
+                          <button onClick={()=>clearCartFlag(item.id)} className="text-xs font-semibold text-amber-700 bg-white border border-amber-200 rounded-md px-3 py-1 whitespace-nowrap">Size confirmed</button>
+                        </div>
+                      )}
                       <div className="px-5 py-3.5 bg-slate-50 flex items-center justify-between border-b border-slate-100">
                         <div className="flex items-center gap-3">
                           <span className="text-xs font-bold text-slate-400 bg-slate-200 px-2.5 py-1 rounded-md">LINE {idx+1}</span>
@@ -1451,7 +1679,16 @@ export default function FilterCutDB() {
                           <span className="text-xs text-[#0066B3] bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md font-medium">{prod.short}</span>
                           {r.multiYield && <span className="text-xs text-violet-600 bg-violet-50 px-2 py-0.5 rounded-md font-medium">Multi-Yield</span>}
                           {r.stripBump && <span className="text-xs text-teal-600 bg-teal-50 px-2 py-0.5 rounded-md font-medium">Strip Bump</span>}
-                          <span className="text-xs text-slate-400">{getMethodLabel(r)}</span>
+                          {opts.length > 1 ? (
+                            <select value={curIdx} onChange={e=>selectCartOption(item.id, parseInt(e.target.value,10))}
+                              className="text-xs text-slate-600 bg-white border border-slate-200 hover:border-[#0066B3] rounded-md px-2 py-1 focus:outline-none focus:border-[#0066B3]">
+                              {opts.map((o, oi) => (
+                                <option key={oi} value={oi}>Option {oi+1}{oi===0?" (best)":""} — {getMethodLabel(o)} — {calcStockPulls(o, item.qty).total} stock</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span className="text-xs text-slate-400">{getMethodLabel(r)}</span>
+                          )}
                         </div>
                         <div className="flex items-center gap-4">
                           <div className="flex items-center gap-2">
@@ -1506,6 +1743,7 @@ export default function FilterCutDB() {
                 <div className="flex items-center justify-between pt-4 border-t border-slate-200">
                   <div className="text-sm text-slate-400">
                     {cartItems.length} line item{cartItems.length!==1?"s":""} · {totalCustomFilters} custom filters · {totalStockFilters} stock to pull
+                    {flaggedCount > 0 && <span className="text-red-400 font-semibold"> · {flaggedCount} flagged — resolve before printing</span>}
                   </div>
                   <button onClick={()=>setShowPrint(true)} disabled={!canGenerate}
                     className="bg-[#0066B3] hover:bg-[#005299] disabled:bg-slate-300 disabled:text-slate-500 text-white font-semibold px-6 py-2.5 rounded-lg text-sm transition-all shadow-sm hover:shadow-md flex items-center gap-2">
