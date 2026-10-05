@@ -50,6 +50,18 @@ const IMPORT_DEPTHS = { "01": 1, "02": 2, "04": 4 };
 const IMPORT_LINE_RE  = /^\s*(\d+)\s+(?:_+\s+\d+\s+)?(10[A-Z0-9]+)-(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)-(\d{2})\b\s*(.*)$/i;
 const IMPORT_TOKEN_RE = /\b(10[A-Z0-9]*)-(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)-(\d{2})\b/i;
 const IMPORT_ORDER_RE = /\bORD\d{6,}\b/i;
+// Rule 2 (quotes / un-prefixed lines): the word "Custom" + an H x W x D size + a product word.
+// Order matters: Dual before 30/30 because the Dual's full name is "30/30 Dual 9".
+// Bare "MV8" is NOT a signal — GSP and MH are both MV8 pleats. Bare "MV13" IS GHP13 (nothing else custom is MV13).
+const IMPORT_CUSTOM_RE = /\bcustom\b/i;
+const IMPORT_SIZE_RE   = /(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)(?![\d.])/;
+const IMPORT_KEYWORDS = [
+  [/\b(dual\s*9|d9|fpd9|mv9a?)\b/i,                  "dual9"],
+  [/\b(ghp\s*13|aeropleat\s*13(?:sc)?|mv13)\b/i,     "aeropleat13"],  // "Custom … MV13" is always GHP13 (per Steve, Oct 2026)
+  [/\b(gsp|aeropleat\s*3)\b/i,                        "aeropleat3"],
+  [/\b(mh|mann\s*&?\s*hummel|mannhummel)\b/i,        "mv8"],
+  [/30\s*\/\s*30/,                                    "3030"],
+];
 
 function parseTicketText(text) {
   const rows = [], attention = [];
@@ -61,9 +73,23 @@ function parseTicketText(text) {
     if (!orderNumber) { const om = line.match(IMPORT_ORDER_RE); if (om) orderNumber = om[0].toUpperCase(); }
     const m = line.match(IMPORT_LINE_RE);
     if (!m) {
-      // A custom-looking token with no readable qty in front of it
-      if (IMPORT_TOKEN_RE.test(line)) attention.push({ line, why: "Custom item found but qty could not be read" });
-      else ignored++;
+      if (IMPORT_TOKEN_RE.test(line)) { attention.push({ line, why: "Custom item found but qty could not be read" }); continue; }
+      // ── Rule 2: description-driven ("Custom 25x10x2 30/30") ──
+      if (IMPORT_CUSTOM_RE.test(line)) {
+        const s = line.match(IMPORT_SIZE_RE);
+        if (!s) { attention.push({ line, why: "'Custom' but no H x W x D size found" }); continue; }
+        const kw = IMPORT_KEYWORDS.find(([re]) => re.test(line));
+        if (!kw) { attention.push({ line, why: "'Custom' but product type not recognized (30/30, Dual 9, GHP13, GSP, MH)" }); continue; }
+        const q = line.replace(s[0], " ").match(/(?:^|\s)(\d+)(?=\s)/);
+        if (!q) { attention.push({ line, why: "'Custom' but qty could not be read" }); continue; }
+        const depth = parseFloat(s[3]);
+        if (depth !== 1 && depth !== 2 && depth !== 4) { attention.push({ line, why: `Depth ${depth}" not supported (1/2/4 only)` }); continue; }
+        const qty = parseInt(q[1], 10), h = parseFloat(s[1]), w = parseFloat(s[2]);
+        if (!qty || qty < 1 || !h || !w) { attention.push({ line, why: "Bad qty or size" }); continue; }
+        rows.push({ productId: kw[1], prefix: null, itemNumber: null, qty, h, w, depth, flag: null, line });
+        continue;
+      }
+      ignored++;
       continue;
     }
     const [, qtyS, pfxRaw, hS, wS, dd, desc] = m;
@@ -1411,7 +1437,7 @@ export default function FilterCutDB() {
                 <div className="mt-5 pt-5 border-t border-slate-100">
                   <div className="flex flex-wrap items-start gap-6">
                     <div className="flex-1 min-w-[320px]">
-                      <label className="text-sm font-medium text-slate-500 block mb-2">Paste the picking ticket text (Ctrl+A / Ctrl+C on the PDF, then paste here)</label>
+                      <label className="text-sm font-medium text-slate-500 block mb-2">Paste text from a packing slip, quote, or any document (Ctrl+A / Ctrl+C, then paste here)</label>
                       <textarea value={importText} onChange={e => setImportText(e.target.value)} rows={8} spellCheck={false}
                         placeholder={"1 _______ 0 10FPD9-15.5-49.5-01 15.50x49.50x1 dual 9\n3 _______ 0 10FPD9-8.5-54.5-01 8.50x54.50x1 dual 9\n..."}
                         className={`${inputCls} w-full font-mono text-xs leading-relaxed`} />
@@ -1429,8 +1455,8 @@ export default function FilterCutDB() {
                       </div>
                     </div>
                     <div className="w-64 bg-slate-50 border border-slate-200 rounded-lg p-4 text-xs text-slate-500 space-y-1.5">
-                      <div className="font-semibold text-slate-600 uppercase tracking-wider text-[10px] mb-2">How it reads the ticket</div>
-                      <div>Only item numbers starting with a custom prefix are used; everything else on the slip is ignored.</div>
+                      <div className="font-semibold text-slate-600 uppercase tracking-wider text-[10px] mb-2">How it reads the text</div>
+                      <div>A line is imported if it has a custom item number prefix, <span className="font-semibold">or</span> the word "Custom" with an H x W x D size and a product name. Everything else is ignored.</div>
                       <div className="pt-1 font-mono text-[11px] text-slate-600 space-y-0.5">
                         <div>10GSP → Camfil AP3 (GSP)</div>
                         <div>10FP → Camfil 30/30</div>
@@ -1438,7 +1464,7 @@ export default function FilterCutDB() {
                         <div>10MH → MH MV8 pleat</div>
                         <div>10FPD9 → Camfil Dual MV9/9A</div>
                       </div>
-                      <div className="pt-1">Format: <span className="font-mono">10FPD9-H-W-01</span> → H × W × 1" (01/02/04 = depth). Qty comes from the Ordered column.</div>
+                      <div className="pt-1">Prefix format: <span className="font-mono">10FPD9-H-W-01</span> → H × W × 1" (01/02/04 = depth). Description format: <span className="font-mono">Custom 25x10x2 30/30</span>. Qty is the first number on the line.</div>
                       <div className="pt-1">Each line gets the engine's best option; you can switch options in the cart. Lines the engine can't solve, or where the description disagrees with the item number, are flagged and block the MFG sheet until resolved.</div>
                     </div>
                   </div>
