@@ -75,7 +75,7 @@ function parseTicketText(text) {
     if (!m) {
       if (IMPORT_TOKEN_RE.test(line)) { attention.push({ line, why: "Custom item found but qty could not be read" }); continue; }
       // ── Rule 2: description-driven ("Custom 25x10x2 30/30") ──
-      if (IMPORT_CUSTOM_RE.test(line)) {
+      if (IMPORT_CUSTOM_RE.test(line) && /\d/.test(line)) {   // "Custom Air Handlers" in a footer has no digits — not a line item
         const s = line.match(IMPORT_SIZE_RE);
         if (!s) { attention.push({ line, why: "'Custom' but no H x W x D size found" }); continue; }
         const kw = IMPORT_KEYWORDS.find(([re]) => re.test(line));
@@ -86,6 +86,7 @@ function parseTicketText(text) {
         if (depth !== 1 && depth !== 2 && depth !== 4) { attention.push({ line, why: `Depth ${depth}" not supported (1/2/4 only)` }); continue; }
         const qty = parseInt(q[1], 10), h = parseFloat(s[1]), w = parseFloat(s[2]);
         if (!qty || qty < 1 || !h || !w) { attention.push({ line, why: "Bad qty or size" }); continue; }
+        const se = customSizeError(h, w); if (se) { attention.push({ line, why: se }); continue; }
         rows.push({ productId: kw[1], prefix: null, itemNumber: null, qty, h, w, depth, flag: null, line });
         continue;
       }
@@ -100,6 +101,7 @@ function parseTicketText(text) {
     if (!depth) { attention.push({ line, why: `Depth code -${dd} not supported (01/02/04 only)` }); continue; }
     const qty = parseInt(qtyS, 10), h = parseFloat(hS), w = parseFloat(wS);
     if (!qty || qty < 1 || !h || !w) { attention.push({ line, why: "Bad qty or size" }); continue; }
+    const se = customSizeError(h, w); if (se) { attention.push({ line, why: se }); continue; }
     // Cross-check description "HxWxD" against the item number; item number wins, mismatch is flagged
     let flag = null;
     const dm = (desc || "").trim().match(/^(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+)(?![\d.])/i);
@@ -109,6 +111,51 @@ function parseTicketText(text) {
     rows.push({ productId: hit[1], prefix: pfx, itemNumber: `${pfxRaw}-${hS}-${wS}-${dd}`, qty, h, w, depth, flag, line });
   }
   return { rows, attention, ignored, orderNumber };
+}
+
+// ─── PDF TEXT EXTRACTION (browser-side, pdf.js from cdnjs, loaded on first use) ─
+// Pinned version. Lines are rebuilt from text positions: items on the same y become one line,
+// ordered by x — this is what turns a picking ticket row back into "1 _______ 0 10FPD9-… desc".
+const PDFJS_VERSION = "3.11.174";
+const PDFJS_BASE = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/`;
+let pdfjsLoading = null;
+function loadPdfJs() {
+  if (typeof window === "undefined") return Promise.reject(new Error("no window"));
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (pdfjsLoading) return pdfjsLoading;
+  pdfjsLoading = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = PDFJS_BASE + "pdf.min.js";
+    s.async = true;
+    s.onload = () => {
+      if (!window.pdfjsLib) { reject(new Error("pdf.js did not initialize")); return; }
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_BASE + "pdf.worker.min.js";
+      resolve(window.pdfjsLib);
+    };
+    s.onerror = () => { pdfjsLoading = null; reject(new Error("Could not load the PDF reader")); };
+    document.head.appendChild(s);
+  });
+  return pdfjsLoading;
+}
+async function extractPdfLines(file) {
+  const pdfjs = await loadPdfJs();
+  const data = new Uint8Array(await file.arrayBuffer());
+  const doc = await pdfjs.getDocument({ data }).promise;
+  const out = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const tc = await page.getTextContent();
+    const rows = {};
+    for (const it of tc.items) {
+      if (!it.str || !it.str.trim()) continue;
+      const y = Math.round(it.transform[5] / 2) * 2;
+      (rows[y] = rows[y] || []).push({ x: it.transform[4], s: it.str });
+    }
+    Object.keys(rows).map(Number).sort((a, b) => b - a).forEach(y => {
+      out.push(rows[y].sort((a, b) => a.x - b.x).map(i => i.s).join(" ").replace(/\s+/g, " ").trim());
+    });
+  }
+  return out;
 }
 
 // ─── PART NUMBERS (stock filters only) ───────────────────────────────────────
@@ -445,7 +492,74 @@ function getStockOrientations(stocks) {
   return orientations;
 }
 
+// ─── ENGINE CONSTANTS ────────────────────────────────────────────────────────
+// Minimum custom dimension. Below this the piece cannot be framed/cut safely (Steve, Oct 2026).
+const MIN_CUSTOM_DIM = 5;
+const customSizeError = (h, w) => {
+  if (!(h > 0) || !(w > 0)) return "Enter a height and width.";
+  if (h < MIN_CUSTOM_DIM || w < MIN_CUSTOM_DIM) return `Safety risk — custom dimensions under ${MIN_CUSTOM_DIM}" cannot be made (${h}" × ${w}").`;
+  return null;
+};
+
+// ─── SORT (tier-based) — shared by the oriented engine and the merge step ─────
+// qty = 1:  T0 single cut → T1 plain 2-filter butt (simplest known method) → T2 strip bump → T3 rest
+// qty > 1:  T0 single-stock multi-yield (fewest stocks per filter) → T1 single cut → T2 strip bump → T3 rest
+// Within tiers: preferred stock first → fewest stocks/filter → same-size sets → least waste/filter → fewest cuts
+// (Oct 2026: stocks/filter moved ahead of same-size so a 3-stock butt never outranks a 2-stock butt.)
+const cutComparator = (qty) => {
+  const tierOf = (r) => {
+    const my1 = r.multiYield && r.stockFilters.length === 1;
+    if ((qty || 1) > 1) {
+      if (my1) return 0;
+      if (r.type === "single") return 1;
+    } else {
+      if (r.type === "single") return 0;
+      if (r.type === "linear-2") return 1;
+    }
+    if (r.stripBump) return 2;
+    return 3;
+  };
+  return (a, b) => {
+    const t = tierOf(a) - tierOf(b);
+    if (t) return t;
+    const prefA = a.stockFilters.every(f => isPreferred(f.nomH, f.nomW)) ? 0 : 1;
+    const prefB = b.stockFilters.every(f => isPreferred(f.nomH, f.nomW)) ? 0 : 1;
+    if (prefA !== prefB) return prefA - prefB;
+    const yA = a.yieldsPerStock || 1, yB = b.yieldsPerStock || 1;
+    const spfA = a.stockFilters.length / yA, spfB = b.stockFilters.length / yB;
+    if (spfA !== spfB) return spfA - spfB;
+    const sameA = a.stockFilters.every(f => f.nomH === a.stockFilters[0].nomH && f.nomW === a.stockFilters[0].nomW) ? 0 : 1;
+    const sameB = b.stockFilters.every(f => f.nomH === b.stockFilters[0].nomH && f.nomW === b.stockFilters[0].nomW) ? 0 : 1;
+    if (sameA !== sameB) return sameA - sameB;
+    return (a.wasteArea / yA) - (b.wasteArea / yB) || a.cuts - b.cuts;
+  };
+};
+
+// Physical-layout signature: the same cut reached from H×W and from W×H is one result, not two.
+const cutSignature = (r) => {
+  const fam = r.stripBump ? "strip" : r.multiYield ? "multi" : r.type === "single" ? "single" : r.layout === "grid" ? "grid" : "linear";
+  const stocks = r.stockFilters.map(f => { const a = f.rotated ? f.origNomH : f.nomH, b = f.rotated ? f.origNomW : f.nomW; return a <= b ? `${a}x${b}` : `${b}x${a}`; }).sort().join("+");
+  const trims = [r.trimH, r.trimW].sort((x, y) => x - y).join("/");
+  return `${fam}|${stocks}|${r.yieldsPerStock || 1}|${r.wasteArea}|${trims}`;
+};
+
+// ─── PUBLIC ENTRY: orientation-agnostic ──────────────────────────────────────
+// Pleat direction does not matter for custom sizes (Steve, Oct 2026), so the engine is run for
+// H×W and for W×H, the results are merged, de-duplicated, and ranked together. Results found
+// from the swapped run are marked swapped:true (pleats run horizontal relative to the order).
 function findBestCut(customH, customW, depth, qty = 1, productId = null) {
+  if (customSizeError(customH, customW)) return null;
+  const a = findBestCutOriented(customH, customW, depth, qty, productId) || [];
+  const b = customH !== customW
+    ? (findBestCutOriented(customW, customH, depth, qty, productId) || []).map(r => ({ ...r, swapped: true }))
+    : [];
+  const seen = new Set(), merged = [];
+  for (const r of [...a, ...b]) { const s = cutSignature(r); if (seen.has(s)) continue; seen.add(s); merged.push(r); }
+  merged.sort(cutComparator(qty));
+  return merged.length > 0 ? merged.slice(0, 12) : null;
+}
+
+function findBestCutOriented(customH, customW, depth, qty = 1, productId = null) {
   const stocks = productId ? getAvailableStock(productId, depth) : STOCK[depth];
   if (!stocks || stocks.length === 0) return null;
   const needH = customH, needW = customW;
@@ -492,7 +606,31 @@ function findBestCut(customH, customW, depth, qty = 1, productId = null) {
   // ── GRID ────────────────────────────────────────────────────────────────
   const uniqueHeights = [...new Set(allOrientations.map(f => +f.actH.toFixed(2)))].sort((a,b)=>a-b);
   const uniqueWidths  = [...new Set(allOrientations.map(f => +f.actW.toFixed(2)))].sort((a,b)=>a-b);
-  const findFilter = (h, w) => allOrientations.find(f => +f.actH.toFixed(2) === +h.toFixed(2) && +f.actW.toFixed(2) === +w.toFixed(2));
+  // O(1) lookup, first-match semantics preserved (same as the former allOrientations.find)
+  const findFilterMap = new Map();
+  for (const f of allOrientations) { const k = f.actH.toFixed(2) + "|" + f.actW.toFixed(2); if (!findFilterMap.has(k)) findFilterMap.set(k, f); }
+  const findFilter = (h, w) => findFilterMap.get(h.toFixed(2) + "|" + w.toFixed(2));
+
+  // Grid results all sort into the last tier and, within a class (rows×cols, all-preferred, all-same-size),
+  // rank purely by waste then cuts. Only the top 12 of any class can reach the final 12, so each class
+  // keeps its best 12 (ties keep insertion order, matching the stable sort). Output is identical to
+  // keeping every grid; it just avoids building and sorting hundreds of thousands of objects.
+  const GRID_KEEP = 12;
+  const gridBuckets = new Map();
+  const gridCmp = (a, b) => (a.wasteArea - b.wasteArea) || (a.cuts - b.cuts);
+  const keepGrid = (res) => {
+    const pref = res.stockFilters.every(f => isPreferred(f.nomH, f.nomW)) ? 0 : 1;
+    const same = res.stockFilters.every(f => f.nomH === res.stockFilters[0].nomH && f.nomW === res.stockFilters[0].nomW) ? 0 : 1;
+    const key = `${res.gridRows}x${res.gridCols}|${pref}|${same}`;
+    let b = gridBuckets.get(key); if (!b) { b = { arr: [], sigs: new Set() }; gridBuckets.set(key, b); }
+    const sig = cutSignature(res);
+    if (b.sigs.has(sig)) return;                                           // rotated twin — the merge step would drop it anyway
+    const arr = b.arr;
+    if (arr.length >= GRID_KEEP && gridCmp(res, arr[arr.length - 1]) >= 0) return;
+    let i = arr.length; while (i > 0 && gridCmp(arr[i - 1], res) > 0) i--;   // after all ≤ elements (stable)
+    arr.splice(i, 0, res); b.sigs.add(sig);
+    if (arr.length > GRID_KEEP) { const dropped = arr.pop(); b.sigs.delete(cutSignature(dropped)); }
+  };
 
   const addGridResult = (rowHeights, colWidths) => {
     const nRows=rowHeights.length, nCols=colWidths.length;
@@ -504,15 +642,17 @@ function findBestCut(customH, customW, depth, qty = 1, productId = null) {
     for (let r=0;r<nRows;r++) for (let c=0;c<nCols;c++) { const f=findFilter(rowHeights[r],colWidths[c]); if (!f) return; gridFilters.push({ nomH:f.nomH, nomW:f.nomW, actH:f.actH, actW:f.actW, rotated:f.rotated, origNomH:f.origNomH, origNomW:f.origNomW, gridRow:r, gridCol:c }); }
     const wasteArea=+((combinedH*combinedW)-(needH*needW)).toFixed(4);
     const joints=(nRows-1)+(nCols-1), cuts=joints+(wasteH>0?1:0)+(wasteW>0?1:0);
-    results.push({ type:`grid-${nRows}x${nCols}`, layout:"grid", gridRows:nRows, gridCols:nCols, rowHeights, colWidths, stockFilters:gridFilters, trimH:wasteH, trimW:wasteW, combinedW, combinedH, wasteArea, cuts, customActH:needH, customActW:needW, depth, yieldsPerStock:1 });
+    keepGrid({ type:`grid-${nRows}x${nCols}`, layout:"grid", gridRows:nRows, gridCols:nCols, rowHeights, colWidths, stockFilters:gridFilters, trimH:wasteH, trimW:wasteW, combinedW, combinedH, wasteArea, cuts, customActH:needH, customActW:needW, depth, yieldsPerStock:1 });
   };
 
   const gridConfigs=[[2,2],[2,3],[3,2]];
   for (const [nRows,nCols] of gridConfigs) {
     const hCombos=nRows===2?uniqueHeights.flatMap((h1,i)=>uniqueHeights.slice(i).map(h2=>[h1,h2])):uniqueHeights.flatMap((h1,i)=>uniqueHeights.slice(i).flatMap((h2,j)=>uniqueHeights.slice(i+j).map(h3=>[h1,h2,h3])));
     const wCombos=nCols===2?uniqueWidths.flatMap((w1,i)=>uniqueWidths.slice(i).map(w2=>[w1,w2])):uniqueWidths.flatMap((w1,i)=>uniqueWidths.slice(i).flatMap((w2,j)=>uniqueWidths.slice(i+j).map(w3=>[w1,w2,w3])));
-    for (const rh of hCombos) { const totalH=rh.reduce((a,b)=>a+b,0); if(totalH<needH) continue; for (const cw of wCombos) { const totalW=cw.reduce((a,b)=>a+b,0); if(totalW<needW) continue; addGridResult(rh,cw); } }
+    const wOk=wCombos.filter(cw=>cw.reduce((a,b)=>a+b,0)>=needW);   // pre-filter once (same test as before)
+    for (const rh of hCombos) { const totalH=rh.reduce((a,b)=>a+b,0); if(totalH<needH) continue; for (const cw of wOk) addGridResult(rh,cw); }
   }
+  for (const b of gridBuckets.values()) for (const g of b.arr) results.push(g);
 
   // ── MULTI-YIELD: 2 custom filters from 1 stock arrangement (qty > 1 only) ──
   if ((qty || 1) > 1) {
@@ -597,38 +737,8 @@ function findBestCut(customH, customW, depth, qty = 1, productId = null) {
       wasteArea, cuts, customActH:needH, customActW:needW, depth });
   }
 
-  // ── SORT (tier-based) ──────────────────────────────────────────────────
-  // qty = 1:  T0 single cut → T1 plain 2-filter butt (simplest known method) → T2 strip bump → T3 rest
-  // qty > 1:  T0 single-stock multi-yield (fewest stocks per filter) → T1 single cut → T2 strip bump → T3 rest
-  // Within tiers: preferred stock first → same-size sets → fewest stocks/filter → least waste/filter → fewest cuts
-  const tierOf = (r) => {
-    const my1 = r.multiYield && r.stockFilters.length === 1;
-    if ((qty || 1) > 1) {
-      if (my1) return 0;
-      if (r.type === "single") return 1;
-    } else {
-      if (r.type === "single") return 0;
-      if (r.type === "linear-2") return 1; // one filter: a simple 2-stock butt beats strip cutting
-    }
-    if (r.stripBump) return 2;
-    return 3;
-  };
-  results.sort((a, b) => {
-    const t = tierOf(a) - tierOf(b);
-    if (t) return t;
-    const prefA = a.stockFilters.every(f => isPreferred(f.nomH, f.nomW)) ? 0 : 1;
-    const prefB = b.stockFilters.every(f => isPreferred(f.nomH, f.nomW)) ? 0 : 1;
-    if (prefA !== prefB) return prefA - prefB;
-    const sameA = a.stockFilters.every(f => f.nomH === a.stockFilters[0].nomH && f.nomW === a.stockFilters[0].nomW) ? 0 : 1;
-    const sameB = b.stockFilters.every(f => f.nomH === b.stockFilters[0].nomH && f.nomW === b.stockFilters[0].nomW) ? 0 : 1;
-    if (sameA !== sameB) return sameA - sameB;
-    // Normalize per custom filter yielded: multi-yield wasteArea/stock-count cover 2 customs, others cover 1
-    const yA = a.yieldsPerStock || 1, yB = b.yieldsPerStock || 1;
-    return (a.stockFilters.length / yA) - (b.stockFilters.length / yB) ||
-      (a.wasteArea / yA) - (b.wasteArea / yB) ||
-      a.cuts - b.cuts;
-  });
-  return results.length > 0 ? results.slice(0, 12) : null;
+  results.sort(cutComparator(qty));
+  return results;
 }
 
 // ─── SVG CUT DIAGRAM ─────────────────────────────────────────────────────────
@@ -908,6 +1018,9 @@ function CutDiagram({ result, compact = false, printMode = false }) {
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 function getMethodLabel(r) {
+  return getMethodLabelBase(r) + (r.swapped ? " · Rotated" : "");
+}
+function getMethodLabelBase(r) {
   if (r.stripBump) return "Strip Bump (1 stock, 2 strips)";
   if (r.type === "multi-2x2") return "Multi-Yield 2x2 (4 per stock)";
   if (r.multiYield) {
@@ -950,7 +1063,8 @@ function calcStockPulls(r, qty) {
   }
   const pulls = Object.values(groups).map(g => ({ ...g, count: g.slots * arrangements }));
   const total = pulls.reduce((s, p) => s + p.count, 0);
-  return { arrangements, pulls, total };
+  const spares = r.multiYield ? arrangements * yieldsPerStock - qty : 0; // extra pieces from the last arrangement
+  return { arrangements, pulls, total, spares };
 }
 
 function calcStockSummary(cartItems) {
@@ -1020,7 +1134,7 @@ function PrintSheet({ order, cartItems, onClose }) {
             const r = item.selectedResult;
             const prod = PRODUCTS.find(p => p.id === item.productId) || PRODUCTS[0];
             const yieldsPerStock = r.yieldsPerStock || 1;
-            const { arrangements, pulls, total } = calcStockPulls(r, item.qty);
+            const { arrangements, pulls, total, spares } = calcStockPulls(r, item.qty);
             return (
               <div key={item.id} style={{ background:"#fff", color:"#000", fontFamily:"'JetBrains Mono',monospace", width:"100%", minHeight:"min-content", padding:"0.5in", marginBottom:"8px", boxShadow:"0 2px 8px rgba(0,0,0,0.1)" }}>
                 {/* Header */}
@@ -1087,6 +1201,11 @@ function PrintSheet({ order, cartItems, onClose }) {
                               → to make {item.qty} filters
                             </div>
                           </>
+                        )}
+                        {spares > 0 && (
+                          <div style={{ fontSize:"12px", fontWeight:"700", marginBottom:"3px" }}>
+                            {spares} extra to throw out
+                          </div>
                         )}
                         {r.multiYield && (
                           <div style={{ background:"#f0f7ff", border:"1px solid #b3d4f7", borderRadius:"3px", padding:"5px 8px", fontSize:"10px", color:"#0066B3", fontWeight:"600", marginTop:"6px" }}>
@@ -1220,6 +1339,7 @@ export default function FilterCutDB() {
   const [qty, setQty]               = useState(1);
   const [results, setResults]       = useState(null);
   const [searched, setSearched]     = useState(false);
+  const [sizeError, setSizeError]   = useState(null);
   const [selectedIdx, setSelectedIdx] = useState(0);
 
   const [cartItems, setCartItems]   = useState([]);
@@ -1233,6 +1353,9 @@ export default function FilterCutDB() {
   const handleSearch = useCallback(() => {
     const h = parseFloat(customH), w = parseFloat(customW);
     if (!h || !w || h <= 0 || w <= 0) return;
+    const err = customSizeError(h, w);
+    setSizeError(err);
+    if (err) { setResults(null); setSearched(true); setSelectedIdx(0); return; }
     const r = findBestCut(h, w, depth, qty, productId);
     setResults(r);
     setSearched(true);
@@ -1259,9 +1382,20 @@ export default function FilterCutDB() {
   const removeCartItem = (id) => setCartItems(prev => prev.filter(i => i.id !== id));
   const clearCart = () => setCartItems([]);
 
+  // Qty changes re-run the engine (multi-yield eligibility depends on qty). If the option the user had
+  // chosen still exists in the new list it stays selected; otherwise the new best is selected.
   const updateQty = (id, newQty) => {
     const q = Math.max(1, parseInt(newQty) || 1);
-    setCartItems(prev => prev.map(i => i.id === id ? { ...i, qty: q } : i));
+    setCartItems(prev => prev.map(i => {
+      if (i.id !== id) return i;
+      if (!i.selectedResult && !i.allResults) return { ...i, qty: q };   // flagged line — nothing to re-run
+      const res = findBestCut(i.customH, i.customW, i.depth, q, i.productId);
+      if (!res) return { ...i, qty: q, selectedResult: null, allResults: null, flag: i.flag || "No solution at this quantity — edit or remove" };
+      const prevSig = i.selectedResult ? cutSignature(i.selectedResult) : null;
+      const keepIdx = prevSig ? res.findIndex(r => cutSignature(r) === prevSig) : -1;
+      const idx = keepIdx >= 0 ? keepIdx : 0;
+      return { ...i, qty: q, selectedResult: res[idx], allResults: res, selectedIdx: idx };
+    }));
   };
 
   // Cart review: switch a line to a different engine option (same result objects the builder showed)
@@ -1291,6 +1425,33 @@ export default function FilterCutDB() {
   const [showImport, setShowImport]     = useState(false);
   const [importText, setImportText]     = useState("");
   const [importReport, setImportReport] = useState(null);
+
+  // ── Cart line edit: change product / size / depth / qty and re-run the engine for that line ──
+  const [editingId, setEditingId] = useState(null);
+  const [editDraft, setEditDraft] = useState({ productId: "3030", h: "", w: "", depth: 1, qty: 1 });
+  const startEdit = (item) => {
+    setEditDraft({ productId: item.productId || productId, h: String(item.customH), w: String(item.customW), depth: item.depth, qty: item.qty });
+    setEditingId(item.id);
+  };
+  const cancelEdit = () => setEditingId(null);
+  const saveEdit = (id) => {
+    const h = parseFloat(editDraft.h), w = parseFloat(editDraft.w);
+    const q = Math.max(1, parseInt(editDraft.qty) || 1);
+    if (!h || !w || h <= 0 || w <= 0) return;
+    const sizeErr = customSizeError(h, w);
+    const res = sizeErr ? null : findBestCut(h, w, editDraft.depth, q, editDraft.productId);
+    const prodLabel = (PRODUCTS.find(p => p.id === editDraft.productId) || {}).label || editDraft.productId;
+    setCartItems(prev => prev.map(i => i.id !== id ? i : {
+      ...i,
+      productId: editDraft.productId,
+      customH: h, customW: w, depth: editDraft.depth, qty: q,
+      selectedResult: res ? res[0] : null,
+      allResults: res,
+      selectedIdx: 0,
+      flag: res ? null : (sizeErr || `No stock combination in ${editDraft.depth}" ${prodLabel} can make ${h}" × ${w}" — edit again or remove`),
+    }));
+    setEditingId(null);
+  };
   const importFileRef = useRef(null);
 
   const runImport = (text) => {
@@ -1329,14 +1490,39 @@ export default function FilterCutDB() {
     setView("cart");
   };
 
+  const [importStatus, setImportStatus] = useState(null);   // "Reading PDF…" / error text
+  const [dragOver, setDragOver] = useState(false);
+
+  const ingestFile = async (f) => {
+    if (!f) return;
+    const isPdf = f.type === "application/pdf" || /\.pdf$/i.test(f.name);
+    if (isPdf) {
+      setImportStatus(`Reading ${f.name}…`);
+      try {
+        const lines = await extractPdfLines(f);
+        setImportText(lines.join("\n"));
+        setImportStatus(null);
+      } catch (err) {
+        setImportStatus(`${err && err.message ? err.message : "Could not read PDF"} — open the PDF, Ctrl+A / Ctrl+C, and paste the text instead.`);
+      }
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = ev => { setImportText(String(ev.target.result || "")); setImportStatus(null); };
+    reader.readAsText(f);
+  };
   const handleImportFile = (e) => {
     const f = e.target.files && e.target.files[0];
-    if (!f) return;
-    const reader = new FileReader();
-    reader.onload = ev => { setImportText(String(ev.target.result || "")); };
-    reader.readAsText(f);
     e.target.value = "";
+    ingestFile(f);
   };
+  const handleDrop = (e) => {
+    e.preventDefault(); e.stopPropagation(); setDragOver(false);
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    ingestFile(f);
+  };
+  const handleDragOver = (e) => { e.preventDefault(); e.stopPropagation(); if (!dragOver) setDragOver(true); };
+  const handleDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); setDragOver(false); };
 
   const stockSummary = useMemo(() => calcStockSummary(cartItems), [cartItems]);
   const totalCustomFilters = useMemo(() => cartItems.reduce((s, i) => s + (i.qty || 1), 0), [cartItems]);
@@ -1436,27 +1622,30 @@ export default function FilterCutDB() {
               {showImport && (
                 <div className="mt-5 pt-5 border-t border-slate-100">
                   <div className="flex flex-wrap items-start gap-6">
-                    <div className="flex-1 min-w-[320px]">
-                      <label className="text-sm font-medium text-slate-500 block mb-2">Paste text from a packing slip, quote, or any document (Ctrl+A / Ctrl+C, then paste here)</label>
+                    <div className="flex-1 min-w-[320px]" onDrop={handleDrop} onDragOver={handleDragOver} onDragLeave={handleDragLeave}>
+                      <label className="text-sm font-medium text-slate-500 block mb-2">Drop a PDF here, or paste text from a packing slip, quote, or any document</label>
+                      <div className={`rounded-lg border-2 border-dashed p-1 transition-colors ${dragOver ? "border-[#0066B3] bg-blue-50/40" : "border-slate-200"}`}>
                       <textarea value={importText} onChange={e => setImportText(e.target.value)} rows={8} spellCheck={false}
                         placeholder={"1 _______ 0 10FPD9-15.5-49.5-01 15.50x49.50x1 dual 9\n3 _______ 0 10FPD9-8.5-54.5-01 8.50x54.50x1 dual 9\n..."}
                         className={`${inputCls} w-full font-mono text-xs leading-relaxed`} />
+                      </div>
+                      {importStatus && <div className={`text-xs mt-2 ${/^Reading/.test(importStatus) ? "text-slate-500" : "text-red-600"}`}>{importStatus}</div>}
                       <div className="flex items-center gap-3 mt-3">
                         <button onClick={() => { if (importText.trim()) runImport(importText); }}
                           className="bg-[#0066B3] hover:bg-[#005299] text-white font-semibold px-8 py-2.5 rounded-lg text-sm transition-all shadow-sm hover:shadow-md">
                           Build Cart
                         </button>
-                        <input ref={importFileRef} type="file" accept=".txt,.csv,.tsv,text/plain" onChange={handleImportFile} className="hidden" />
+                        <input ref={importFileRef} type="file" accept=".pdf,application/pdf,.txt,.csv,.tsv,text/plain" onChange={handleImportFile} className="hidden" />
                         <button onClick={() => importFileRef.current && importFileRef.current.click()}
                           className="text-sm text-slate-500 hover:text-[#0066B3] border border-slate-200 hover:border-[#0066B3] rounded-lg px-4 py-2 transition-colors">
-                          Load .txt / .csv file
+                          Choose PDF / text file
                         </button>
                         {importText.trim() && <span className="text-xs text-slate-400">{parseTicketText(importText).rows.length} custom line{parseTicketText(importText).rows.length !== 1 ? "s" : ""} detected</span>}
                       </div>
                     </div>
                     <div className="w-64 bg-slate-50 border border-slate-200 rounded-lg p-4 text-xs text-slate-500 space-y-1.5">
                       <div className="font-semibold text-slate-600 uppercase tracking-wider text-[10px] mb-2">How it reads the text</div>
-                      <div>A line is imported if it has a custom item number prefix, <span className="font-semibold">or</span> the word "Custom" with an H x W x D size and a product name. Everything else is ignored.</div>
+                      <div>Drop or choose a PDF (packing slip, quote) and the text is read out of it. A line is imported if it has a custom item number prefix, <span className="font-semibold">or</span> the word "Custom" with an H x W x D size and a product name. Everything else is ignored. Dimensions under {MIN_CUSTOM_DIM}" are a safety risk and are flagged.</div>
                       <div className="pt-1 font-mono text-[11px] text-slate-600 space-y-0.5">
                         <div>10GSP → Camfil AP3 (GSP)</div>
                         <div>10FP → Camfil 30/30</div>
@@ -1532,8 +1721,8 @@ export default function FilterCutDB() {
 
             {searched && !results && (
               <div className="bg-red-50 border border-red-200 rounded-xl p-8 text-center">
-                <div className="text-red-600 font-semibold text-base">No Solution Found</div>
-                <div className="text-red-400 text-sm mt-2">No {PRODUCTS.find(p=>p.id===productId)?.label} stock filter combination in {depth}" depth can produce {customH}" × {customW}".</div>
+                <div className="text-red-600 font-semibold text-base">{sizeError ? "Cannot Be Made" : "No Solution Found"}</div>
+                <div className="text-red-400 text-sm mt-2">{sizeError || `No ${PRODUCTS.find(p=>p.id===productId)?.label} stock filter combination in ${depth}" depth can produce ${customH}" × ${customW}".`}</div>
               </div>
             )}
 
@@ -1556,6 +1745,7 @@ export default function FilterCutDB() {
                         {i===0 && selectedIdx!==i && <span className="text-xs font-bold text-emerald-600 bg-emerald-100 px-2.5 py-1 rounded-md">BEST</span>}
                         {r.multiYield && <span className="text-xs font-bold text-violet-600 bg-violet-100 px-2.5 py-1 rounded-md">MULTI-YIELD</span>}
                         {r.stripBump && <span className="text-xs font-bold text-teal-600 bg-teal-100 px-2.5 py-1 rounded-md">STRIP BUMP</span>}
+                        {r.swapped && <span className="text-xs font-bold text-sky-600 bg-sky-50 px-2.5 py-1 rounded-md">PLEATS HORIZONTAL</span>}
                         <span className="text-sm font-medium text-slate-600">
                           Option {i+1} — {getMethodLabel(r)}
                         </span>
@@ -1677,17 +1867,58 @@ export default function FilterCutDB() {
                             {item.itemNumber && <span className="text-xs font-mono text-slate-400">{item.itemNumber}</span>}
                           </div>
                           <div className="flex items-center gap-3">
+                            <button onClick={()=>editingId===item.id ? cancelEdit() : startEdit(item)} className="text-sm font-semibold text-[#0066B3] hover:underline">{editingId===item.id ? "Close" : "Edit"}</button>
                             <button onClick={()=>buildManually(item)} className="text-sm font-semibold text-[#0066B3] hover:underline">Build manually</button>
                             <button onClick={()=>removeCartItem(item.id)} className="text-red-400 hover:text-red-500 text-sm transition-colors font-medium">Remove</button>
                           </div>
                         </div>
                         <div className="px-5 pb-4 text-sm text-red-600">{item.flag}</div>
+                      {editingId === item.id && (
+                        <div className="px-5 py-4 bg-blue-50/40 border-b border-blue-100">
+                          <div className="flex flex-wrap items-end gap-4">
+                            <div>
+                              <label className="text-xs font-medium text-slate-500 block mb-1.5">Product</label>
+                              <select value={editDraft.productId} onChange={e=>setEditDraft({...editDraft, productId: e.target.value})}
+                                className="text-sm text-slate-800 bg-white border border-slate-200 hover:border-[#0066B3] rounded-lg px-3 py-1.5 focus:outline-none focus:border-[#0066B3]">
+                                {PRODUCTS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium text-slate-500 block mb-1.5">Height</label>
+                              <Inp type="number" step="0.01" value={editDraft.h} onChange={e=>setEditDraft({...editDraft, h: e.target.value})}
+                                className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-800 text-sm w-24 focus:outline-none focus:border-[#0066B3] font-mono" />
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium text-slate-500 block mb-1.5">Width</label>
+                              <Inp type="number" step="0.01" value={editDraft.w} onChange={e=>setEditDraft({...editDraft, w: e.target.value})}
+                                className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-800 text-sm w-24 focus:outline-none focus:border-[#0066B3] font-mono" />
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium text-slate-500 block mb-1.5">Depth</label>
+                              <select value={editDraft.depth} onChange={e=>setEditDraft({...editDraft, depth: parseInt(e.target.value,10)})}
+                                className="text-sm text-slate-800 bg-white border border-slate-200 hover:border-[#0066B3] rounded-lg px-3 py-1.5 focus:outline-none focus:border-[#0066B3]">
+                                {[1,2,4].map(d => <option key={d} value={d}>{d}"</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium text-slate-500 block mb-1.5">Qty</label>
+                              <Inp type="number" min="1" value={editDraft.qty} onChange={e=>setEditDraft({...editDraft, qty: e.target.value})}
+                                className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-800 text-sm w-20 focus:outline-none focus:border-[#0066B3] text-center" />
+                            </div>
+                            <button onClick={()=>saveEdit(item.id)}
+                              className="bg-[#0066B3] hover:bg-[#005299] text-white font-semibold px-6 py-2 rounded-lg text-sm transition-all shadow-sm hover:shadow-md">
+                              Recalculate
+                            </button>
+                            <button onClick={cancelEdit} className="text-sm text-slate-400 hover:text-slate-600 transition-colors">Cancel</button>
+                          </div>
+                        </div>
+                      )}
                       </div>
                     );
                   }
 
                   const yieldsPerStock = r.yieldsPerStock || 1;
-                  const { arrangements, pulls, total } = calcStockPulls(r, item.qty);
+                  const { arrangements, pulls, total, spares } = calcStockPulls(r, item.qty);
                   const opts = item.allResults || [];
                   const curIdx = Math.max(0, opts.indexOf(r));
                   return (
@@ -1705,6 +1936,7 @@ export default function FilterCutDB() {
                           <span className="text-xs text-[#0066B3] bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md font-medium">{prod.short}</span>
                           {r.multiYield && <span className="text-xs text-violet-600 bg-violet-50 px-2 py-0.5 rounded-md font-medium">Multi-Yield</span>}
                           {r.stripBump && <span className="text-xs text-teal-600 bg-teal-50 px-2 py-0.5 rounded-md font-medium">Strip Bump</span>}
+                          {r.swapped && <span className="text-xs text-sky-600 bg-sky-50 px-2 py-0.5 rounded-md font-medium">Pleats horizontal</span>}
                           {opts.length > 1 ? (
                             <select value={curIdx} onChange={e=>selectCartOption(item.id, parseInt(e.target.value,10))}
                               className="text-xs text-slate-600 bg-white border border-slate-200 hover:border-[#0066B3] rounded-md px-2 py-1 focus:outline-none focus:border-[#0066B3]">
@@ -1722,9 +1954,50 @@ export default function FilterCutDB() {
                             <Inp type="number" value={item.qty} min="1" onChange={e=>updateQty(item.id,e.target.value)}
                               className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-800 text-sm w-20 focus:outline-none focus:border-[#0066B3] text-center"/>
                           </div>
+                          <button onClick={()=>editingId===item.id ? cancelEdit() : startEdit(item)} className="text-sm font-semibold text-[#0066B3] hover:underline">{editingId===item.id ? "Close" : "Edit"}</button>
                           <button onClick={()=>removeCartItem(item.id)} className="text-red-400 hover:text-red-500 text-sm transition-colors font-medium">Remove</button>
                         </div>
                       </div>
+                      {editingId === item.id && (
+                        <div className="px-5 py-4 bg-blue-50/40 border-b border-blue-100">
+                          <div className="flex flex-wrap items-end gap-4">
+                            <div>
+                              <label className="text-xs font-medium text-slate-500 block mb-1.5">Product</label>
+                              <select value={editDraft.productId} onChange={e=>setEditDraft({...editDraft, productId: e.target.value})}
+                                className="text-sm text-slate-800 bg-white border border-slate-200 hover:border-[#0066B3] rounded-lg px-3 py-1.5 focus:outline-none focus:border-[#0066B3]">
+                                {PRODUCTS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium text-slate-500 block mb-1.5">Height</label>
+                              <Inp type="number" step="0.01" value={editDraft.h} onChange={e=>setEditDraft({...editDraft, h: e.target.value})}
+                                className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-800 text-sm w-24 focus:outline-none focus:border-[#0066B3] font-mono" />
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium text-slate-500 block mb-1.5">Width</label>
+                              <Inp type="number" step="0.01" value={editDraft.w} onChange={e=>setEditDraft({...editDraft, w: e.target.value})}
+                                className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-800 text-sm w-24 focus:outline-none focus:border-[#0066B3] font-mono" />
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium text-slate-500 block mb-1.5">Depth</label>
+                              <select value={editDraft.depth} onChange={e=>setEditDraft({...editDraft, depth: parseInt(e.target.value,10)})}
+                                className="text-sm text-slate-800 bg-white border border-slate-200 hover:border-[#0066B3] rounded-lg px-3 py-1.5 focus:outline-none focus:border-[#0066B3]">
+                                {[1,2,4].map(d => <option key={d} value={d}>{d}"</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium text-slate-500 block mb-1.5">Qty</label>
+                              <Inp type="number" min="1" value={editDraft.qty} onChange={e=>setEditDraft({...editDraft, qty: e.target.value})}
+                                className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-800 text-sm w-20 focus:outline-none focus:border-[#0066B3] text-center" />
+                            </div>
+                            <button onClick={()=>saveEdit(item.id)}
+                              className="bg-[#0066B3] hover:bg-[#005299] text-white font-semibold px-6 py-2 rounded-lg text-sm transition-all shadow-sm hover:shadow-md">
+                              Recalculate
+                            </button>
+                            <button onClick={cancelEdit} className="text-sm text-slate-400 hover:text-slate-600 transition-colors">Cancel</button>
+                          </div>
+                        </div>
+                      )}
                       <div className="p-5 grid grid-cols-1 md:grid-cols-3 gap-5">
                         <div className="md:col-span-2 space-y-3">
                           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Stock Filters Required</div>
@@ -1743,6 +2016,9 @@ export default function FilterCutDB() {
                             <div className="text-sm font-mono text-slate-700 pt-1 border-t border-slate-100">
                               <span className="text-slate-400">Total stock: </span><span className="text-[#0066B3] font-bold">{total}</span> for {item.qty} custom
                             </div>
+                          )}
+                          {spares > 0 && (
+                            <div className="text-sm font-mono text-amber-600">{spares} extra to throw out</div>
                           )}
                           <div className="flex gap-6 pt-2 text-sm">
                             <div><span className="text-slate-400">Trim: </span><span className="font-mono text-slate-600">{r.trimH>0?`${r.trimH}" H`:""}{r.trimH>0&&r.trimW>0?" / ":""}{r.trimW>0?`${r.trimW}" W`:""}{!r.trimH&&!r.trimW?"None":""}</span></div>
