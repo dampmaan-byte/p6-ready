@@ -556,7 +556,28 @@ function findBestCut(customH, customW, depth, qty = 1, productId = null) {
   const seen = new Set(), merged = [];
   for (const r of [...a, ...b]) { const s = cutSignature(r); if (seen.has(s)) continue; seen.add(s); merged.push(r); }
   merged.sort(cutComparator(qty));
+  rankSingleCuts(merged);
   return merged.length > 0 ? merged.slice(0, 12) : null;
+}
+
+// ─── SINGLE-CUT TIER ORDER (Steve, Oct 2026) ─────────────────────────────────
+// Within the single-cut tier: Option 1 = least waste (fewest cuts on a tie), tagged LEAST WASTE.
+// Option 2 = the best preferred-stock single cut if it is a different pick, tagged PREFERRED STOCK
+// (preferred sizes are the ones the warehouse actually keeps in quantity, so the least-waste size
+// may not be on the shelf). The rest keep their existing order. Other tiers are unchanged.
+function rankSingleCuts(sorted) {
+  const idx = []; for (let i = 0; i < sorted.length; i++) if (sorted[i].type === "single") idx.push(i);
+  if (idx.length < 2) { if (idx.length === 1) sorted[idx[0]].rankTag = "least-waste"; return; }
+  const singles = idx.map(i => sorted[i]);
+  let lw = singles[0];
+  for (const s of singles) if (s.wasteArea < lw.wasteArea || (s.wasteArea === lw.wasteArea && s.cuts < lw.cuts)) lw = s;
+  const isPref = s => s.stockFilters.every(f => isPreferred(f.nomH, f.nomW));
+  const pref = isPref(lw) ? null : singles.find(s => s !== lw && isPref(s));   // singles are already in preferred-first order
+  lw.rankTag = isPref(lw) ? "least-waste-preferred" : "least-waste";
+  if (pref) pref.rankTag = "preferred";
+  const rest = singles.filter(s => s !== lw && s !== pref);
+  const reordered = [lw, ...(pref ? [pref] : []), ...rest];
+  idx.forEach((i, k) => { sorted[i] = reordered[k]; });   // same slots, new order — the tier stays where it was
 }
 
 function findBestCutOriented(customH, customW, depth, qty = 1, productId = null) {
@@ -1027,7 +1048,7 @@ function getMethodLabelBase(r) {
     const dir = r.splitDirection === "height" ? "2x1" : "1x2";
     return r.stockFilters.length > 1 ? "Multi-Yield " + dir + " (" + r.stockFilters.length + "-stock butt)" : "Multi-Yield " + dir;
   }
-  if (r.type === "single") return "Single Cut";
+  if (r.type === "single") return r.cuts === 0 ? "Stock Size (no cut)" : "Single Cut";
   if (r.layout === "grid") return r.gridRows + "x" + r.gridCols + " Grid";
   return r.stockFilters.length + "-Filter Butt";
 }
@@ -1154,7 +1175,7 @@ function PrintSheet({ order, cartItems, onClose }) {
                 <div style={{ border:"1px solid #ddd", borderRadius:"4px", overflow:"hidden" }}>
                   <div style={{ background:"#f5f5f5", borderBottom:"1px solid #ddd", padding:"6px 10px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                     <span style={{ fontSize:"12px", fontWeight:"700" }}>
-                      Line {idx+1} — {item.customH}" × {item.customW}" × {r.depth}" — {prod.label}
+                      Line {idx+1} — {item.customH}" × {item.customW}" × {r.depth}"{item.nominal ? ` (nominal ${item.nomH} × ${item.nomW})` : ""} — {prod.label}
                     </span>
                     <span style={{ display:"inline-block", background:"#111", color:"#fff", fontSize:"9px", fontWeight:"700", padding:"2px 8px", borderRadius:"3px", letterSpacing:"1px" }}>
                       {getMethodLabel(r)}
@@ -1170,7 +1191,7 @@ function PrintSheet({ order, cartItems, onClose }) {
                         </div>
                         <div>
                           <div style={{ fontSize:"9px", fontWeight:"700", textTransform:"uppercase", letterSpacing:".5px", color:"#666" }}>Custom Filter Size</div>
-                          <div style={{ fontSize:"14px", fontWeight:"700", marginTop:"2px" }}>{item.customH}" × {item.customW}" × {r.depth}"</div>
+                          <div style={{ fontSize:"14px", fontWeight:"700", marginTop:"2px" }}>{item.customH}" × {item.customW}" × {r.depth}"{item.nominal ? <span style={{ fontWeight:"400", fontSize:"11px", color:"#666" }}> (nominal {item.nomH} × {item.nomW} — cut to actual)</span> : null}</div>
                         </div>
                         <div>
                           <div style={{ fontSize:"9px", fontWeight:"700", textTransform:"uppercase", letterSpacing:".5px", color:"#666" }}>Product Type</div>
@@ -1270,7 +1291,7 @@ function PrintSheet({ order, cartItems, onClose }) {
                       <tr key={item.id} style={{ background:"#fff" }}>
                         <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc" }}>{idx+1}</td>
                         <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc" }}>{prod.short}</td>
-                        <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc", fontWeight:"700" }}>{item.customH}" × {item.customW}" × {r.depth}"</td>
+                        <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc", fontWeight:"700" }}>{item.customH}" × {item.customW}" × {r.depth}"{item.nominal ? ` (nom. ${item.nomH}×${item.nomW})` : ""}</td>
                         <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc" }}>{r.depth}"</td>
                         <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc", fontWeight:"700" }}>{item.qty}</td>
                         <td style={{ padding:"6px 10px", borderBottom:"1px solid #ccc" }}>{getMethodLabel(r)}</td>
@@ -1337,6 +1358,7 @@ export default function FilterCutDB() {
   const [depth, setDepth]           = useState(1);
   const [productId, setProductId]   = useState("aeropleat3");
   const [qty, setQty]               = useState(1);
+  const [nominal, setNominal]       = useState(false);   // entered size is nominal → cut to −½" each side
   const [results, setResults]       = useState(null);
   const [searched, setSearched]     = useState(false);
   const [sizeError, setSizeError]   = useState(null);
@@ -1351,8 +1373,9 @@ export default function FilterCutDB() {
   const [showInventory, setShowInventory] = useState(false);
 
   const handleSearch = useCallback(() => {
-    const h = parseFloat(customH), w = parseFloat(customW);
-    if (!h || !w || h <= 0 || w <= 0) return;
+    const hIn = parseFloat(customH), wIn = parseFloat(customW);
+    if (!hIn || !wIn || hIn <= 0 || wIn <= 0) return;
+    const h = nominal ? +(hIn - 0.5).toFixed(4) : hIn, w = nominal ? +(wIn - 0.5).toFixed(4) : wIn;
     const err = customSizeError(h, w);
     setSizeError(err);
     if (err) { setResults(null); setSearched(true); setSelectedIdx(0); return; }
@@ -1360,15 +1383,19 @@ export default function FilterCutDB() {
     setResults(r);
     setSearched(true);
     setSelectedIdx(0);
-  }, [customH, customW, depth, qty, productId]);
+  }, [customH, customW, depth, qty, productId, nominal]);
 
   const handleAddToCart = () => {
     if (!results || !results[selectedIdx]) return;
+    const hIn = parseFloat(customH), wIn = parseFloat(customW);
     const item = {
       id: Date.now(),
       productId,
-      customH: parseFloat(customH),
-      customW: parseFloat(customW),
+      customH: nominal ? +(hIn - 0.5).toFixed(4) : hIn,   // always the ACTUAL cut size
+      customW: nominal ? +(wIn - 0.5).toFixed(4) : wIn,
+      nominal,
+      nomH: nominal ? hIn : null,
+      nomW: nominal ? wIn : null,
       qty,
       depth,
       selectedResult: results[selectedIdx],
@@ -1428,16 +1455,17 @@ export default function FilterCutDB() {
 
   // ── Cart line edit: change product / size / depth / qty and re-run the engine for that line ──
   const [editingId, setEditingId] = useState(null);
-  const [editDraft, setEditDraft] = useState({ productId: "3030", h: "", w: "", depth: 1, qty: 1 });
+  const [editDraft, setEditDraft] = useState({ productId: "3030", h: "", w: "", depth: 1, qty: 1, nominal: false });
   const startEdit = (item) => {
-    setEditDraft({ productId: item.productId || productId, h: String(item.customH), w: String(item.customW), depth: item.depth, qty: item.qty });
+    setEditDraft({ productId: item.productId || productId, h: String(item.nominal ? item.nomH : item.customH), w: String(item.nominal ? item.nomW : item.customW), depth: item.depth, qty: item.qty, nominal: !!item.nominal });
     setEditingId(item.id);
   };
   const cancelEdit = () => setEditingId(null);
   const saveEdit = (id) => {
-    const h = parseFloat(editDraft.h), w = parseFloat(editDraft.w);
+    const hIn = parseFloat(editDraft.h), wIn = parseFloat(editDraft.w);
     const q = Math.max(1, parseInt(editDraft.qty) || 1);
-    if (!h || !w || h <= 0 || w <= 0) return;
+    if (!hIn || !wIn || hIn <= 0 || wIn <= 0) return;
+    const h = editDraft.nominal ? +(hIn - 0.5).toFixed(4) : hIn, w = editDraft.nominal ? +(wIn - 0.5).toFixed(4) : wIn;
     const sizeErr = customSizeError(h, w);
     const res = sizeErr ? null : findBestCut(h, w, editDraft.depth, q, editDraft.productId);
     const prodLabel = (PRODUCTS.find(p => p.id === editDraft.productId) || {}).label || editDraft.productId;
@@ -1445,6 +1473,7 @@ export default function FilterCutDB() {
       ...i,
       productId: editDraft.productId,
       customH: h, customW: w, depth: editDraft.depth, qty: q,
+      nominal: editDraft.nominal, nomH: editDraft.nominal ? hIn : null, nomW: editDraft.nominal ? wIn : null,
       selectedResult: res ? res[0] : null,
       allResults: res,
       selectedIdx: 0,
@@ -1686,6 +1715,11 @@ export default function FilterCutDB() {
                   <Inp type="number" value={customW} onChange={e=>setCustomW(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSearch()}
                     placeholder="e.g. 30" step="0.25" min="1" className={`${inputCls} w-28`} />
                 </div>
+                <label className="flex items-center gap-2 pb-2.5 cursor-pointer select-none" title="Size is nominal — the filter will be cut ½ inch under on each side (e.g. 10x25 → 9.5 × 24.5)">
+                  <input type="checkbox" checked={nominal} onChange={e=>{setNominal(e.target.checked);setResults(null);setSearched(false);}} className="w-4 h-4 accent-[#0066B3]" />
+                  <span className="text-sm font-medium text-slate-500">Nominal size</span>
+                  {nominal && customH && customW && <span className="text-xs font-mono text-[#0066B3]">→ cut {+(parseFloat(customH)-0.5).toFixed(2)} × {+(parseFloat(customW)-0.5).toFixed(2)} actual</span>}
+                </label>
                 <span className="text-slate-300 text-xl pb-2.5 font-light">×</span>
                 <div>
                   <label className="text-sm font-medium text-slate-500 block mb-2">Depth</label>
@@ -1729,7 +1763,7 @@ export default function FilterCutDB() {
             {results && (
               <div className="space-y-4">
                 <div className="bg-white border border-slate-200 rounded-xl px-5 py-4 flex items-center justify-between shadow-sm">
-                  <div className="text-sm text-slate-400">{results.length} option{results.length!==1?"s":""} found — select a drawing below</div>
+                  <div className="text-sm text-slate-400">{results.length} option{results.length!==1?"s":""} found{nominal ? ` for ${customH}" × ${customW}" nominal (cut ${+(parseFloat(customH)-0.5).toFixed(2)}" × ${+(parseFloat(customW)-0.5).toFixed(2)}" actual)` : ""} — select a drawing below</div>
                   <button onClick={handleAddToCart}
                     className="bg-[#0066B3] hover:bg-[#005299] text-white font-semibold px-6 py-2.5 rounded-lg text-sm transition-all shadow-sm hover:shadow-md flex items-center gap-2">
                     + Add to Cart <span className="bg-white/20 px-2 py-0.5 rounded text-xs">Option {selectedIdx+1}</span>
@@ -1743,6 +1777,8 @@ export default function FilterCutDB() {
                       <div className="flex items-center gap-3">
                         {selectedIdx===i && <span className="text-xs font-bold text-[#0066B3] bg-blue-100 px-2.5 py-1 rounded-md">SELECTED</span>}
                         {i===0 && selectedIdx!==i && <span className="text-xs font-bold text-emerald-600 bg-emerald-100 px-2.5 py-1 rounded-md">BEST</span>}
+                        {(r.rankTag==="least-waste"||r.rankTag==="least-waste-preferred") && <span className="text-xs font-bold text-emerald-600 bg-emerald-100 px-2.5 py-1 rounded-md">LEAST WASTE</span>}
+                        {(r.rankTag==="preferred"||r.rankTag==="least-waste-preferred") && <span className="text-xs font-bold text-amber-600 bg-amber-50 px-2.5 py-1 rounded-md">PREFERRED STOCK</span>}
                         {r.multiYield && <span className="text-xs font-bold text-violet-600 bg-violet-100 px-2.5 py-1 rounded-md">MULTI-YIELD</span>}
                         {r.stripBump && <span className="text-xs font-bold text-teal-600 bg-teal-100 px-2.5 py-1 rounded-md">STRIP BUMP</span>}
                         {r.swapped && <span className="text-xs font-bold text-sky-600 bg-sky-50 px-2.5 py-1 rounded-md">PLEATS HORIZONTAL</span>}
@@ -1861,7 +1897,7 @@ export default function FilterCutDB() {
                         <div className="px-5 py-3.5 flex items-center justify-between">
                           <div className="flex items-center gap-3">
                             <span className="text-xs font-bold text-red-600 bg-white border border-red-200 px-2.5 py-1 rounded-md">LINE {idx+1} — NEEDS MANUAL PICK</span>
-                            <span className="text-sm font-mono font-semibold text-slate-700">{item.customH}" × {item.customW}" × {item.depth}"</span>
+                            <span className="text-sm font-mono font-semibold text-slate-700">{item.customH}" × {item.customW}" × {item.depth}"{item.nominal && <span className="text-xs text-slate-400 font-normal"> (nominal {item.nomH} × {item.nomW})</span>}</span>
                             <span className="text-xs text-[#0066B3] bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md font-medium">{prod.short}</span>
                             <span className="text-xs text-slate-500">Qty {item.qty}</span>
                             {item.itemNumber && <span className="text-xs font-mono text-slate-400">{item.itemNumber}</span>}
@@ -1905,6 +1941,11 @@ export default function FilterCutDB() {
                               <Inp type="number" min="1" value={editDraft.qty} onChange={e=>setEditDraft({...editDraft, qty: e.target.value})}
                                 className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-800 text-sm w-20 focus:outline-none focus:border-[#0066B3] text-center" />
                             </div>
+                            <label className="flex items-center gap-2 pb-2 cursor-pointer select-none" title="Size is nominal — cut ½ inch under on each side">
+                              <input type="checkbox" checked={editDraft.nominal} onChange={e=>setEditDraft({...editDraft, nominal: e.target.checked})} className="w-4 h-4 accent-[#0066B3]" />
+                              <span className="text-xs font-medium text-slate-500">Nominal</span>
+                              {editDraft.nominal && editDraft.h && editDraft.w && <span className="text-xs font-mono text-[#0066B3]">→ {+(parseFloat(editDraft.h)-0.5).toFixed(2)} × {+(parseFloat(editDraft.w)-0.5).toFixed(2)}</span>}
+                            </label>
                             <button onClick={()=>saveEdit(item.id)}
                               className="bg-[#0066B3] hover:bg-[#005299] text-white font-semibold px-6 py-2 rounded-lg text-sm transition-all shadow-sm hover:shadow-md">
                               Recalculate
@@ -1932,7 +1973,7 @@ export default function FilterCutDB() {
                       <div className="px-5 py-3.5 bg-slate-50 flex items-center justify-between border-b border-slate-100">
                         <div className="flex items-center gap-3">
                           <span className="text-xs font-bold text-slate-400 bg-slate-200 px-2.5 py-1 rounded-md">LINE {idx+1}</span>
-                          <span className="text-sm font-mono font-semibold text-slate-700">{item.customH}" × {item.customW}" × {r.depth}"</span>
+                          <span className="text-sm font-mono font-semibold text-slate-700">{item.customH}" × {item.customW}" × {r.depth}"{item.nominal && <span className="text-xs text-slate-400 font-normal"> (nominal {item.nomH} × {item.nomW})</span>}</span>
                           <span className="text-xs text-[#0066B3] bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md font-medium">{prod.short}</span>
                           {r.multiYield && <span className="text-xs text-violet-600 bg-violet-50 px-2 py-0.5 rounded-md font-medium">Multi-Yield</span>}
                           {r.stripBump && <span className="text-xs text-teal-600 bg-teal-50 px-2 py-0.5 rounded-md font-medium">Strip Bump</span>}
@@ -1990,6 +2031,11 @@ export default function FilterCutDB() {
                               <Inp type="number" min="1" value={editDraft.qty} onChange={e=>setEditDraft({...editDraft, qty: e.target.value})}
                                 className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-800 text-sm w-20 focus:outline-none focus:border-[#0066B3] text-center" />
                             </div>
+                            <label className="flex items-center gap-2 pb-2 cursor-pointer select-none" title="Size is nominal — cut ½ inch under on each side">
+                              <input type="checkbox" checked={editDraft.nominal} onChange={e=>setEditDraft({...editDraft, nominal: e.target.checked})} className="w-4 h-4 accent-[#0066B3]" />
+                              <span className="text-xs font-medium text-slate-500">Nominal</span>
+                              {editDraft.nominal && editDraft.h && editDraft.w && <span className="text-xs font-mono text-[#0066B3]">→ {+(parseFloat(editDraft.h)-0.5).toFixed(2)} × {+(parseFloat(editDraft.w)-0.5).toFixed(2)}</span>}
+                            </label>
                             <button onClick={()=>saveEdit(item.id)}
                               className="bg-[#0066B3] hover:bg-[#005299] text-white font-semibold px-6 py-2 rounded-lg text-sm transition-all shadow-sm hover:shadow-md">
                               Recalculate
@@ -2102,7 +2148,7 @@ export default function FilterCutDB() {
                           <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50/50">
                             <td className="px-5 py-4 text-slate-400">{idx+1}</td>
                             <td className="px-5 py-4"><span className="text-xs font-medium text-[#0066B3] bg-blue-50 px-2 py-1 rounded">{prod.short}</span></td>
-                            <td className="px-5 py-4 font-mono text-slate-700 font-semibold">{item.customH}" × {item.customW}" × {r.depth}"</td>
+                            <td className="px-5 py-4 font-mono text-slate-700 font-semibold">{item.customH}" × {item.customW}" × {r.depth}"{item.nominal && <span className="text-xs text-slate-400 font-normal"> (nominal {item.nomH} × {item.nomW})</span>}</td>
                             <td className="px-5 py-4 text-[#0066B3] font-bold">{item.qty}</td>
                             <td className="px-5 py-4 text-slate-500 text-xs">{getMethodLabel(r)}</td>
                             <td className="px-5 py-4 text-sm font-mono text-slate-500">
